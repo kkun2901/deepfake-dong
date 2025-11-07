@@ -21,9 +21,10 @@ class FloatingWidgetModule(reactContext: ReactApplicationContext) : ReactContext
         @Volatile
         private var instance: FloatingWidgetModule? = null
         
-        private const val REQUEST_OVERLAY_PERMISSION = 1001
-        const val REQUEST_MEDIA_PROJECTION = 1002
-        const val REQUEST_MEDIA_PROJECTION_CAPTURE = 1003
+               private const val REQUEST_OVERLAY_PERMISSION = 1001
+               const val REQUEST_MEDIA_PROJECTION = 1002
+               const val REQUEST_MEDIA_PROJECTION_CAPTURE = 1003
+               const val REQUEST_MEDIA_PROJECTION_WITH_ANALYSIS = 1004
         
         fun getInstance(): FloatingWidgetModule? = instance
         
@@ -269,6 +270,58 @@ class FloatingWidgetModule(reactContext: ReactApplicationContext) : ReactContext
             promise.resolve(null)
         } catch (e: Exception) {
             promise.reject("ERROR", "Failed to stop recording", e)
+        }
+    }
+    
+    @ReactMethod
+    fun updateUploadProgress(progress: Int, promise: Promise) {
+        try {
+            val intent = Intent(reactApplicationContext, FloatingService::class.java).apply {
+                action = FloatingService.ACTION_UPDATE_UPLOADING
+                putExtra("progress", progress)
+            }
+            reactApplicationContext.startService(intent)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("ERROR", "Failed to update upload progress", e)
+        }
+    }
+    
+    @ReactMethod
+    fun updateAnalyzing(promise: Promise) {
+        try {
+            val intent = Intent(reactApplicationContext, FloatingService::class.java).apply {
+                action = FloatingService.ACTION_UPDATE_ANALYZING
+            }
+            reactApplicationContext.startService(intent)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("ERROR", "Failed to update analyzing state", e)
+        }
+    }
+    
+    @ReactMethod
+    fun updateAnalysisResult(
+        result: String,
+        deepfakePercentage: Int,
+        audioPercentage: Int,
+        videoId: String?,
+        promise: Promise
+    ) {
+        try {
+            val intent = Intent(reactApplicationContext, FloatingService::class.java).apply {
+                action = FloatingService.ACTION_UPDATE_ANALYSIS_RESULT
+                putExtra("result", result)
+                putExtra("deepfakePercentage", deepfakePercentage)
+                putExtra("audioPercentage", audioPercentage)
+                if (videoId != null) {
+                    putExtra("videoId", videoId)
+                }
+            }
+            reactApplicationContext.startService(intent)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("ERROR", "Failed to update analysis result", e)
         }
     }
     

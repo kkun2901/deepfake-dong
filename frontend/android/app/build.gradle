@@ -193,6 +193,9 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+    
+    // OkHttp for HTTP requests in FloatingService
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
 
 if (rnVersion < versionToNumber(0, 75, 0)) {

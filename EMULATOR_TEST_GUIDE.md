@@ -170,3 +170,4 @@ function adb-logcat { adb logcat | Select-String $args[0] }
 
 
 
+

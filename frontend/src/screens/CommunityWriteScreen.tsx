@@ -86,7 +86,7 @@ export default function CommunityWriteScreen() {
       }
 
       // React Native FormData 구성
-      // ⚠️ 근본 원인: React Native FormData가 파일 필드 + 텍스트 필드를 함께 처리하지 못함
+      // 근본 원인: React Native FormData가 파일 필드 + 텍스트 필드를 함께 처리하지 못함
       // 해결책: analyzeVideo처럼 정확히 2개 필드만 사용
       // - 파일 있는 경우: user_id + file (메타데이터는 파일명에 인코딩)
       // - 파일 없는 경우: user_id + title + description + file_type (텍스트만이므로 가능)

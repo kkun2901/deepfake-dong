@@ -16,7 +16,7 @@ import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { StackNavigationProp } from "@react-navigation/stack";
 import type { RootStackParamList } from "../navigation/AppNavigator";
 import { uploadVideoAsync } from "../api/uploadToFirebase";
-import { analyzeVideo, downloadDataset } from "../api";
+import { analyzeVideo } from "../api";
 import { Linking } from "react-native";
 
 type Nav = StackNavigationProp<RootStackParamList, "Record">;
@@ -79,7 +79,7 @@ export default function RecordScreen() {
           if (fileInfo.exists) {
             console.log("[RecordScreen] 파일 크기:", fileInfo.size, "bytes");
             console.log("[RecordScreen] 분석 시작...");
-            handleAnalyze(videoUri, showAnalysisProgress);
+      handleAnalyze(videoUri, showAnalysisProgress);
           } else {
             console.error("[RecordScreen] 파일이 존재하지 않음:", videoUri);
             Alert.alert("오류", "녹화된 파일을 찾을 수 없습니다.");
@@ -613,56 +613,6 @@ export default function RecordScreen() {
                   >
                     <View style={styles.modalButtonCloseBackground}>
                       <Text style={styles.modalButtonCloseText}>닫기</Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.modalButtonDownload}
-                    onPress={async () => {
-                      try {
-                        if (!analysisResult?.videoId) {
-                          Alert.alert("오류", "비디오 ID를 찾을 수 없습니다.");
-                          return;
-                        }
-                        
-                        setBusy(true);
-                        
-                        // JSONL, CSV, Metadata 파일 모두 다운로드
-                        const fileTypes: Array<{type: 'jsonl' | 'csv' | 'metadata', name: string}> = [
-                          { type: 'jsonl', name: '데이터셋 JSONL' },
-                          { type: 'csv', name: '타임라인 CSV' },
-                          { type: 'metadata', name: '메타데이터 JSON' }
-                        ];
-                        
-                        for (const file of fileTypes) {
-                          try {
-                            const downloadUrl = await downloadDataset(analysisResult.videoId, file.type);
-                            const supported = await Linking.canOpenURL(downloadUrl);
-                            if (supported) {
-                              await Linking.openURL(downloadUrl);
-                              // 각 파일 사이에 약간의 딜레이
-                              await new Promise(resolve => setTimeout(resolve, 500));
-                            }
-                          } catch (error: any) {
-                            console.error(`${file.name} 다운로드 오류:`, error);
-                          }
-                        }
-                        
-                        Alert.alert("다운로드 시작", "데이터셋 파일 다운로드가 시작되었습니다.\n(JSONL, CSV, JSON)");
-                        
-                        setAnalysisResult(null);
-                        setBusy(false);
-                        analyzedPathRef.current = null;
-                      } catch (error: any) {
-                        console.error("데이터셋 다운로드 오류:", error);
-                        Alert.alert("오류", `데이터셋 다운로드 실패: ${error?.message || "알 수 없는 오류"}`);
-                        setBusy(false);
-                      }
-                    }}
-                    activeOpacity={0.8}
-                    disabled={busy}
-                  >
-                    <View style={styles.modalButtonDownloadBackground}>
-                      <Text style={styles.modalButtonDownloadText}>데이터셋 다운로드</Text>
                     </View>
                   </TouchableOpacity>
                 </View>

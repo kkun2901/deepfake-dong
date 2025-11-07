@@ -162,7 +162,7 @@ def load_models():
     with loading_lock:
         if models_loaded:
             return True
-        
+            
         print("=" * 60)
         print("EfficientNet-B0 + MesoNet 모델 로딩 시작...")
         print("=" * 60)
@@ -262,7 +262,7 @@ def predict_image(image_path: str):
             return {"error": f"이미지 로드 실패: {image_path}"}
         
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
+
         # 얼굴 crop
         if USE_FACE_CROP:
             image = _crop_face(image)
@@ -304,13 +304,13 @@ def predict_image(image_path: str):
         ensemble_real = 1.0 - ensemble_fake
         ensemble_confidence = max(ensemble_fake, ensemble_real)
         ensemble_label = "FAKE" if ensemble_fake > 0.5 else "REAL"
-        
+
         # 메모리 정리
         del eff_input, eff_output, eff_probs
         if meso_has_weights:
             del meso_input, meso_output, meso_probs
         gc.collect()
-        
+
         return {
             "ensemble_result": ensemble_label,
             "confidence": round(ensemble_confidence, 4),

@@ -11,6 +11,7 @@ import {
   ImageStyle,
   Alert,
   Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useNavigation } from '@react-navigation/native';
@@ -25,7 +26,7 @@ export default function HomeScreen() {
 
   return (
     <ImageBackground 
-      source={require('../assets/home-background.jpg')}
+      source={require('../assets/home-background.png')}
       style={styles.backgroundImage}
       resizeMode="cover"
     >
@@ -49,10 +50,6 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.mainMessage}>
-          당신은 이제 허위 정보에{'\n'}휘둘리지 않을거에요!
-        </Text>
-
         {/* 배경 이미지에 로고가 포함되어 있으므로 주석 처리 */}
         {/* <View style={styles.logoContainer}>
           <Image 
@@ -94,7 +91,7 @@ export default function HomeScreen() {
                   '   npm run android\n\n' +
                   '2. Dev Client:\n' +
                   '   npx expo start --dev-client\n\n' +
-                  '⚠️ Expo Go는 커스텀 네이티브 모듈을 지원하지 않습니다.'
+                  'Expo Go는 커스텀 네이티브 모듈을 지원하지 않습니다.'
                 );
                 return;
               }
@@ -115,43 +112,53 @@ export default function HomeScreen() {
                 return;
               }
               
-              const hasPermission = await FloatingWidget.checkOverlayPermission();
-              console.log('[HomeScreen] 권한 상태:', hasPermission);
-              
-              if (!hasPermission) {
-                console.log('[HomeScreen] 권한 요청 중...');
-                const granted = await FloatingWidget.requestOverlayPermission();
-                console.log('[HomeScreen] 권한 요청 결과:', granted);
-                
-                // 설정 화면에서 돌아오는 시간을 고려해 재확인
-                setTimeout(async () => {
-                  const recheck = await FloatingWidget.checkOverlayPermission();
-                  console.log('[HomeScreen] 권한 재확인:', recheck);
+              // Android 13+ 알림 권한 요청
+              if (Platform.OS === 'android' && Platform.Version >= 33) {
+                try {
+                  // React Native 0.74+에서는 'android.permission.POST_NOTIFICATIONS' 문자열 사용
+                  const POST_NOTIFICATIONS = 'android.permission.POST_NOTIFICATIONS';
                   
-                  if (recheck) {
-                    try {
-                      await FloatingWidget.startService();
-                      console.log('[HomeScreen] 위젯 서비스 시작 완료');
-                      Alert.alert('위젯 시작', '홈 화면으로 이동하면 플로팅 버튼이 표시됩니다.');
-                    } catch (serviceError) {
-                      console.error('[HomeScreen] 서비스 시작 오류:', serviceError);
-                      Alert.alert('오류', `위젯 서비스를 시작할 수 없습니다: ${serviceError}`);
+                  const hasPermission = await PermissionsAndroid.check(POST_NOTIFICATIONS);
+                  
+                  if (!hasPermission) {
+                    const granted = await PermissionsAndroid.request(
+                      POST_NOTIFICATIONS,
+                      {
+                        title: '알림 권한',
+                        message: '딥페이크 탐지 서비스를 사용하려면 알림 권한이 필요합니다.',
+                        buttonNeutral: '나중에',
+                        buttonNegative: '취소',
+                        buttonPositive: '허용',
+                      }
+                    );
+                    
+                    if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+                      Alert.alert(
+                        '권한 필요',
+                        '알림 권한이 필요합니다. 설정에서 권한을 허용해주세요.'
+                      );
+                      return;
                     }
-                  } else {
-                    Alert.alert('권한 필요', '다른 앱 위에 표시 권한이 필요합니다.\n설정에서 권한을 허용한 후 다시 시도해주세요.');
                   }
-                }, 800);
-                return;
+                } catch (err) {
+                  console.warn('[HomeScreen] 알림 권한 요청 오류:', err);
+                }
               }
               
-              // 권한이 있으면 바로 서비스 시작
+              // 서비스 시작
               try {
                 await FloatingWidget.startService();
-                console.log('[HomeScreen] 위젯 서비스 시작 완료');
-                Alert.alert('위젯 시작', '홈 화면으로 이동하면 플로팅 버튼이 표시됩니다.');
+                console.log('[HomeScreen] 서비스 시작 완료');
+                Alert.alert(
+                  '서비스 시작', 
+                  '알림창에 딥페이크 탐지 서비스가 표시됩니다.\n\n' +
+                  '알림창에서 다음 기능을 사용할 수 있습니다:\n' +
+                  '- 비디오: 화면 녹화 시작/중지\n' +
+                  '- 녹화 종료 시 자동으로 분석됩니다'
+                );
               } catch (serviceError) {
                 console.error('[HomeScreen] 서비스 시작 오류:', serviceError);
-                Alert.alert('오류', `위젯 서비스를 시작할 수 없습니다: ${serviceError}`);
+                Alert.alert('오류', `서비스를 시작할 수 없습니다: ${serviceError}`);
               }
             } catch (e) {
               console.error('[HomeScreen] start widget error:', e);

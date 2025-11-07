@@ -67,14 +67,14 @@ async def analyze_video(user_id: str = Form(...), video: UploadFile = File(...))
                 "audio_analysis": {"error": "프레임 추출 실패로 오디오 분석 생략"},
                 "timeline": []
             }
-        
+
         print(f"프레임 샘플링 완료: {len(frames_with_timestamps)}개")
 
         # MesoNet으로 프레임 분석
         print(f"총 {len(frames_with_timestamps)}개 프레임을 MesoNet으로 분석합니다...")
         results = predict_frames(frames_with_timestamps)
         print(f"프레임 분석 완료: {len(results)}개 결과")
-
+        
         # MesoNet 결과 집계
         fake_confidences = []
         real_confidences = []

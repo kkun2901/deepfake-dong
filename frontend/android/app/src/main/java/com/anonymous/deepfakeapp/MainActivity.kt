@@ -42,6 +42,52 @@ class MainActivity : ReactActivity() {
         startActivityForResult(captureIntent, FloatingWidgetModule.REQUEST_MEDIA_PROJECTION)
         android.util.Log.d("MainActivity", "MediaProjection 권한 요청 시작: requestCode=${FloatingWidgetModule.REQUEST_MEDIA_PROJECTION}")
       }
+      "START_RECORDING_WITH_ANALYSIS" -> {
+        android.util.Log.d("MainActivity", "handleIntent: START_RECORDING_WITH_ANALYSIS action received")
+        // MediaProjection 권한 요청 (자동 분석 플래그 포함)
+        val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val captureIntent = mediaProjectionManager.createScreenCaptureIntent()
+        startActivityForResult(captureIntent, FloatingWidgetModule.REQUEST_MEDIA_PROJECTION_WITH_ANALYSIS)
+        android.util.Log.d("MainActivity", "MediaProjection 권한 요청 시작 (자동 분석): requestCode=${FloatingWidgetModule.REQUEST_MEDIA_PROJECTION_WITH_ANALYSIS}")
+      }
+      "UPLOAD_VIDEO" -> {
+        android.util.Log.d("MainActivity", "handleIntent: UPLOAD_VIDEO action received")
+        // React Native 네비게이션으로 Upload 화면으로 이동
+        // React Native 측에서 처리하도록 이벤트 전송
+        val reactInstanceManager = (application as? com.facebook.react.ReactApplication)?.reactNativeHost?.reactInstanceManager
+        val reactContext = reactInstanceManager?.currentReactContext as? com.facebook.react.bridge.ReactApplicationContext
+        reactContext?.let {
+          val params = com.facebook.react.bridge.Arguments.createMap().apply {
+            putString("action", "UPLOAD_VIDEO")
+          }
+          it.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("navigateToUpload", params)
+        }
+      }
+      "VIEW_RESULT" -> {
+        android.util.Log.d("MainActivity", "handleIntent: VIEW_RESULT action received")
+        val videoId = intent.getStringExtra("videoId")
+        // React Native 네비게이션으로 Result 화면으로 이동
+        val reactInstanceManager = (application as? com.facebook.react.ReactApplication)?.reactNativeHost?.reactInstanceManager
+        val reactContext = reactInstanceManager?.currentReactContext as? com.facebook.react.bridge.ReactApplicationContext
+        reactContext?.let {
+          val params = com.facebook.react.bridge.Arguments.createMap().apply {
+            putString("action", "VIEW_RESULT")
+            if (videoId != null) {
+              putString("videoId", videoId)
+            }
+          }
+          it.getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("navigateToResult", params)
+        }
+      }
+      "CAPTURE_FRAME" -> {
+        android.util.Log.d("MainActivity", "handleIntent: CAPTURE_FRAME action received")
+        // MediaProjection 권한 요청
+        val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val captureIntent = mediaProjectionManager.createScreenCaptureIntent()
+        startActivityForResult(captureIntent, FloatingWidgetModule.REQUEST_MEDIA_PROJECTION_CAPTURE)
+      }
     }
   }
 
@@ -103,11 +149,12 @@ class MainActivity : ReactActivity() {
         if (module == null || !module.hasPendingRecordingPromise()) {
           android.util.Log.d("MainActivity", "FloatingWidgetModule이 없거나 promise가 없음, 직접 FloatingService로 전달")
           
-          if (resultCode == Activity.RESULT_OK && data != null) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
             val serviceIntent = Intent(this, FloatingService::class.java).apply {
               action = FloatingService.ACTION_START_RECORDING
               putExtra("resultCode", resultCode)
               putExtra("resultData", data)
+              putExtra("autoAnalyze", false)
             }
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

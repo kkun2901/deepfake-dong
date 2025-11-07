@@ -4,8 +4,9 @@ import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { analyzeVideo, downloadDataset } from '../api';
+import { analyzeVideo } from '../api';
 import { Linking } from 'react-native';
+import { FloatingWidget } from '../utils';
 
 type Nav = StackNavigationProp<RootStackParamList, 'Upload'>;
 
@@ -54,6 +55,14 @@ export default function UploadScreen() {
       setBusy(true);
       setAnalyzing(true);
       setAnalysisResult(null);
+      
+      // 알림창을 "분석 중" 상태로 업데이트
+      try {
+        await FloatingWidget.updateAnalyzing();
+        console.log("[UploadScreen] 알림창을 분석 중 상태로 업데이트");
+      } catch (e) {
+        console.error("[UploadScreen] 알림 상태 업데이트 실패:", e);
+      }
       
       // Firebase 업로드를 생략하고, 디바이스 로컬 URI를 그대로 백엔드로 전송
       const res: any = await analyzeVideo(videoUri, 'user123');
@@ -108,6 +117,30 @@ export default function UploadScreen() {
       }
       
       console.log("[UploadScreen] 계산된 딥페이크 확률:", deepfakePercentage + "%");
+      
+      // 오디오 확률 계산
+      let audioPercentage = 0;
+      if (res?.audio_analysis?.fake_confidence !== undefined) {
+        audioPercentage = Math.round(res.audio_analysis.fake_confidence * 100);
+      } else if (res?.summary?.audio_confidence !== undefined) {
+        audioPercentage = Math.round(res.summary.audio_confidence * 100);
+      }
+      
+      // 분석 결과 (FAKE 또는 REAL)
+      const result = res?.summary?.overall_result || res?.video_analysis?.overall_result || (deepfakePercentage > 50 ? "FAKE" : "REAL");
+      
+      // 알림창 업데이트 (분석 완료 상태)
+      try {
+        await FloatingWidget.updateAnalysisResult(
+          result,
+          deepfakePercentage,
+          audioPercentage,
+          res?.videoId || null
+        );
+        console.log("[UploadScreen] 알림창 업데이트 완료");
+      } catch (e) {
+        console.error("[UploadScreen] 알림창 업데이트 실패:", e);
+      }
       
       // 분석 완료 - 결과를 Modal로 표시
       setAnalysisResult({ percentage: deepfakePercentage, timeline, videoId: res?.videoId });

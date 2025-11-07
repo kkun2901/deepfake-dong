@@ -27,7 +27,7 @@ echo 패키지 설치 확인 중...
 echo.
 echo 백엔드 서버 시작...
 echo 파일 업로드를 위해 max_request_size 증가 (500MB)
-"%PYTHON_EXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --limit-max-requests 500000000
-
+REM Windows에서 multiprocessing 문제를 피하기 위해 --reload 제거
+"%PYTHON_EXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --limit-max-requests 500000000
 pause
 

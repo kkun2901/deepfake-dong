@@ -108,23 +108,23 @@ export async function analyzeVideo(
       console.warn('[analyzeVideo] fetch API 실패, axios로 재시도:', fetchError?.message);
       
       // fetch 실패 시 axios로 재시도
-      const response = await axios.post(
+    const response = await axios.post(
         apiUrl,
-        form,
-        {
+      form,
+      {
           headers: { 
             // Content-Type을 명시하지 않음 - axios가 자동으로 multipart/form-data + boundary 설정
             'Accept': 'application/json',
           },
-          timeout: 120000, // 최대 120초 대기
+        timeout: 120000, // 최대 120초 대기
           maxContentLength: Number.MAX_SAFE_INTEGER,
           maxBodyLength: Number.MAX_SAFE_INTEGER,
-        }
-      );
-      
+      }
+    );
+    
       console.log('[analyzeVideo] 분석 결과 받음 (axios):', response.status);
       console.log('[analyzeVideo] 응답 데이터:', JSON.stringify(response.data).substring(0, 500));
-      return response.data as AnalyzeVideoResponse;
+    return response.data as AnalyzeVideoResponse;
     }
   } catch (error: any) {
     console.error('[analyzeVideo] ====== 영상 분석 요청 실패 ======');

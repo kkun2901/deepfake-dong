@@ -14,6 +14,14 @@ type FloatingWidgetModuleType = {
   startRecording(): Promise<void>;
   stopRecording(): Promise<{ filePath: string } | null>;
   captureFrame(): Promise<{ filePath: string } | null>;
+  updateUploadProgress(progress: number): Promise<void>;
+  updateAnalyzing(): Promise<void>;
+  updateAnalysisResult(
+    result: string,
+    deepfakePercentage: number,
+    audioPercentage: number,
+    videoId: string | null
+  ): Promise<void>;
 };
 
 const maybeModule: Partial<FloatingWidgetModuleType> =
@@ -122,6 +130,46 @@ export const FloatingWidget = {
     }
     return null;
   },
+  async updateUploadProgress(progress: number): Promise<void> {
+    if (Platform.OS !== "android") return;
+    if (typeof maybeModule.updateUploadProgress === "function") {
+      try {
+        await maybeModule.updateUploadProgress(progress);
+      } catch (e) {
+        console.error("[FloatingWidget] updateUploadProgress error:", e);
+      }
+    }
+  },
+  async updateAnalyzing(): Promise<void> {
+    if (Platform.OS !== "android") return;
+    if (typeof maybeModule.updateAnalyzing === "function") {
+      try {
+        await maybeModule.updateAnalyzing();
+      } catch (e) {
+        console.error("[FloatingWidget] updateAnalyzing error:", e);
+      }
+    }
+  },
+  async updateAnalysisResult(
+    result: string,
+    deepfakePercentage: number,
+    audioPercentage: number,
+    videoId: string | null
+  ): Promise<void> {
+    if (Platform.OS !== "android") return;
+    if (typeof maybeModule.updateAnalysisResult === "function") {
+      try {
+        await maybeModule.updateAnalysisResult(
+          result,
+          deepfakePercentage,
+          audioPercentage,
+          videoId
+        );
+      } catch (e) {
+        console.error("[FloatingWidget] updateAnalysisResult error:", e);
+      }
+    }
+  },
 };
 
 const widgetModule: any = (NativeModules as any)?.FloatingWidgetModule;
@@ -158,14 +206,14 @@ if (Platform.OS === "android") {
     });
     
     if (!currentWidgetModule && allModules.length === 0) {
-      console.error("[utils] ⚠️ 네이티브 모듈이 전혀 로드되지 않았습니다!");
+      console.error("[utils] 네이티브 모듈이 전혀 로드되지 않았습니다!");
       console.error("[utils] 이는 앱이 Expo Go에서 실행 중이거나, 네이티브 빌드가 제대로 되지 않았을 수 있습니다.");
       console.error("[utils] 해결 방법:");
       console.error("[utils] 1. npm run android (네이티브 빌드)");
       console.error("[utils] 2. 앱을 완전히 종료하고 다시 시작");
       console.error("[utils] 3. npx expo prebuild --clean 후 다시 빌드");
     } else if (!currentWidgetModule) {
-      console.warn("[utils] ⚠️ FloatingWidgetModule이 로드되지 않았습니다.");
+      console.warn("[utils] FloatingWidgetModule이 로드되지 않았습니다.");
       console.warn("[utils] 하지만 다른 네이티브 모듈은 로드되었습니다:", allModules.slice(0, 10));
       console.warn("[utils] FloatingWidgetPackage가 MainApplication.kt에 등록되어 있는지 확인하세요.");
     }
