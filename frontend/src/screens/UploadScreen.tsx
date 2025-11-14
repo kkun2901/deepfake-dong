@@ -4,7 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { analyzeVideo } from '../api';
+import { analyzeVideo, downloadDataset } from '../api';
 import { Linking } from 'react-native';
 import { FloatingWidget } from '../utils';
 
@@ -262,7 +262,7 @@ export default function UploadScreen() {
         </View>
       </Modal>
 
-      <Button title="🎞 영상 선택" onPress={pickVideo} />
+      <Button title="영상 선택" onPress={pickVideo} />
       {videoUri && <Text style={styles.text}>선택된 영상: {videoUri}</Text>}
 
       <View style={{ height: 16 }} />

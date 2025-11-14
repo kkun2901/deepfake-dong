@@ -25,6 +25,11 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Button
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.TextView
+import android.graphics.drawable.BitmapDrawable
+import java.io.InputStream
 import androidx.core.app.NotificationCompat
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -38,14 +43,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 
 class FloatingService : Service() {
-    // 플로팅 위젯 관련 변수는 더 이상 사용하지 않음 (알림창 방식으로 변경)
-    @Suppress("UNUSED")
+    // 플로팅 위젯 관련 변수
     private var windowManager: WindowManager? = null
-    @Suppress("UNUSED")
     private var floatingView: FrameLayout? = null
-    @Suppress("UNUSED")
-    private var recordButton: Button? = null
-    @Suppress("UNUSED")
+    private var recordButton: ImageButton? = null
     private var isExpanded = false
     private var isRecording = false
     private var mediaProjection: MediaProjection? = null
@@ -98,7 +99,7 @@ class FloatingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // windowManager는 더 이상 필요 없음 (알림창 방식으로 변경)
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         createNotificationChannel()
         
@@ -112,53 +113,12 @@ class FloatingService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 android.util.Log.d("FloatingService", "=== ACTION_START 처리 시작 ===")
-                // 알림창 표시 (플로팅 위젯 대신)
-                // ACTION_START에서는 MediaProjection을 사용하지 않으므로 일반 foreground service로 시작
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    try {
-                        // Android 13+ 알림 권한 확인
-                        var hasNotificationPermission = true
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            hasNotificationPermission = ContextCompat.checkSelfPermission(
-                                this, 
-                                android.Manifest.permission.POST_NOTIFICATIONS
-                            ) == PackageManager.PERMISSION_GRANTED
-                            
-                            if (!hasNotificationPermission) {
-                                android.util.Log.w("FloatingService", "⚠️ 알림 권한이 없습니다!")
-                                android.util.Log.w("FloatingService", "알림이 표시되지 않을 수 있습니다. MainActivity에서 권한을 요청해야 합니다.")
-                            } else {
-                                android.util.Log.d("FloatingService", "✓ 알림 권한 있음")
-                            }
-                        }
-                        
-                        val notification = createNotification()
-                        android.util.Log.d("FloatingService", "알림 생성 완료")
-                        
-                        // ACTION_START에서는 MediaProjection을 사용하지 않으므로
-                        // foreground service type 문제를 피하기 위해 NotificationManager로 직접 알림 표시
-                        // (녹화 시작 시에만 foreground service가 필요함)
-                        val notificationManager = getSystemService(NotificationManager::class.java)
-                        notificationManager.notify(NOTIFICATION_ID, notification)
-                        android.util.Log.d("FloatingService", "✓ NotificationManager를 통해 알림 표시 완료 (ID: $NOTIFICATION_ID)")
-                        
-                        // 서비스는 계속 실행되도록 유지 (START_STICKY)
-                        // 하지만 foreground service로 시작하지 않음 (녹화 시작 시에만 foreground service 필요)
-                        
-                        // 알림이 실제로 표시되었는지 확인
-                        val activeNotifications = notificationManager.activeNotifications
-                        android.util.Log.d("FloatingService", "현재 활성 알림 개수: ${activeNotifications.size}")
-                        activeNotifications.forEach { 
-                            android.util.Log.d("FloatingService", "  - 알림 ID: ${it.id}, 태그: ${it.tag}")
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.e("FloatingService", "❌ Failed to start foreground service", e)
-                        e.printStackTrace()
-                    }
-                }
+                // 플로팅 위젯 표시
+                showFloatingWidget()
                 return START_STICKY
             }
             ACTION_STOP -> {
+                stopFloatingWidget()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
@@ -443,8 +403,7 @@ class FloatingService : Service() {
         notificationManager.notify(NOTIFICATION_ID, createNotification())
     }
 
-    // 플로팅 위젯 관련 코드는 제거됨 (알림창 방식으로 변경)
-    @Suppress("UNUSED")
+    // 플로팅 위젯 표시
     private fun showFloatingWidget() {
         try {
             android.util.Log.d("FloatingService", "=== showFloatingWidget() 시작 ===")
@@ -469,13 +428,31 @@ class FloatingService : Service() {
             )
         }
 
-        // Create main button
-        val mainButton = View(this).apply {
-            val size = (60 * resources.displayMetrics.density).toInt()
+        // Create main button with camera icon
+        val mainButton = ImageView(this).apply {
+            val size = (60 * resources.displayMetrics.density).toInt() // 초기 크기로 복원
             layoutParams = FrameLayout.LayoutParams(size, size).apply {
                 gravity = Gravity.CENTER
             }
-            setBackgroundColor(Color.parseColor("#2563eb")) // 파란색
+            
+            // 카메라 아이콘 로드 시도
+            try {
+                // drawable에 camera_icon.png가 있으면 사용
+                val iconResId = resources.getIdentifier("camera_icon", "drawable", packageName)
+                if (iconResId != 0) {
+                    setImageResource(iconResId)
+                    setBackgroundColor(Color.TRANSPARENT)
+                } else {
+                    // 아이콘이 없으면 임시로 배경색 사용
+                    android.util.Log.w("FloatingService", "camera_icon drawable을 찾을 수 없습니다. PNG로 변환해서 drawable에 추가하세요.")
+                    setBackgroundColor(Color.parseColor("#2563eb")) // 임시 파란색 배경
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("FloatingService", "Failed to load camera icon", e)
+                setBackgroundColor(Color.parseColor("#2563eb")) // 임시 파란색 배경
+            }
+            
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
             elevation = 8f
             // 둥근 모서리
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -496,18 +473,29 @@ class FloatingService : Service() {
         }
 
         // Create menu buttons
-        recordButton = Button(this).apply {
-            text = "녹화"
-            textSize = 10f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#10b981"))
-            val size = (50 * resources.displayMetrics.density).toInt()
+        recordButton = ImageButton(this).apply {
+            try {
+                val recordIcon = ContextCompat.getDrawable(this@FloatingService, resources.getIdentifier("icon_record", "drawable", packageName))
+                if (recordIcon != null) {
+                    setImageDrawable(recordIcon)
+                } else {
+                    // 아이콘을 찾을 수 없으면 기본 아이콘 사용
+                    setImageResource(android.R.drawable.ic_media_play)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("FloatingService", "Failed to load icon_record", e)
+                setImageResource(android.R.drawable.ic_media_play)
+            }
+            setBackgroundColor(Color.TRANSPARENT)
+            val size = (50 * resources.displayMetrics.density).toInt() // 초기 크기로 복원
             layoutParams = FrameLayout.LayoutParams(size, size).apply {
                 gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP
                 bottomMargin = (80 * resources.displayMetrics.density).toInt()
             }
             elevation = 6f
             tag = "record_btn"
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            setPadding(8, 8, 8, 8)
             setOnClickListener {
                 if (recordActionInProgress) return@setOnClickListener
                 recordActionInProgress = true
@@ -531,17 +519,24 @@ class FloatingService : Service() {
         }
         val recordBtn = recordButton!!
 
-        val captureBtn = Button(this).apply {
-            text = "캡처"
-            textSize = 10f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#10b981"))
-            val size = (50 * resources.displayMetrics.density).toInt()
+        val captureBtn = ImageButton(this).apply {
+            try {
+                val captureIcon = ContextCompat.getDrawable(this@FloatingService, resources.getIdentifier("icon_capture", "drawable", packageName))
+                if (captureIcon != null) {
+                    setImageDrawable(captureIcon)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("FloatingService", "Failed to load icon_capture", e)
+            }
+            setBackgroundColor(Color.TRANSPARENT)
+            val size = (50 * resources.displayMetrics.density).toInt() // 초기 크기로 복원
             layoutParams = FrameLayout.LayoutParams(size, size).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.START
                 marginEnd = (80 * resources.displayMetrics.density).toInt()
             }
             elevation = 6f
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            setPadding(8, 8, 8, 8)
             setOnClickListener {
                 toggleMenu()
                 // MainActivity로 이동하여 MediaProjection 권한 요청
@@ -553,17 +548,24 @@ class FloatingService : Service() {
             }
         }
 
-        val exitBtn = Button(this).apply {
-            text = "종료"
-            textSize = 10f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#10b981"))
-            val size = (50 * resources.displayMetrics.density).toInt()
+        val exitBtn = ImageButton(this).apply {
+            try {
+                val closeIcon = ContextCompat.getDrawable(this@FloatingService, resources.getIdentifier("icon_close", "drawable", packageName))
+                if (closeIcon != null) {
+                    setImageDrawable(closeIcon)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("FloatingService", "Failed to load icon_close", e)
+            }
+            setBackgroundColor(Color.TRANSPARENT)
+            val size = (50 * resources.displayMetrics.density).toInt() // 초기 크기로 복원
             layoutParams = FrameLayout.LayoutParams(size, size).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.END
                 marginStart = (80 * resources.displayMetrics.density).toInt()
             }
             elevation = 6f
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            setPadding(8, 8, 8, 8)
             setOnClickListener {
                 stopSelf()
             }
@@ -665,17 +667,66 @@ class FloatingService : Service() {
         })
     }
 
-    // 플로팅 위젯 메뉴 토글은 더 이상 사용하지 않음
-    @Suppress("UNUSED")
+    // 플로팅 위젯 메뉴 토글
     private fun toggleMenu() {
-        // 알림창 방식으로 변경되어 더 이상 필요 없음
+        val menuContainer = floatingView?.findViewWithTag<FrameLayout>("menu_container") ?: return
+        val mainButton = floatingView?.getChildAt(0) ?: return
+        
+        isExpanded = !isExpanded
+        
+        if (isExpanded) {
+            menuContainer.visibility = View.VISIBLE
+            menuContainer.animate()
+                .alpha(1f)
+                .setDuration(200)
+                .start()
+        } else {
+            menuContainer.animate()
+                .alpha(0f)
+                .setDuration(200)
+                .withEndAction {
+                    menuContainer.visibility = View.GONE
+                }
+                .start()
+        }
+    }
+    
+    // 녹화 버튼 아이콘 업데이트
+    private fun updateRecordButton(recording: Boolean) {
+        recordButton?.let { button ->
+            try {
+                val iconResId: Int = if (recording) {
+                    // 녹화 중일 때는 종료 아이콘 표시
+                    resources.getIdentifier("icon_close", "drawable", packageName)
+                } else {
+                    // 녹화 중이 아닐 때는 녹화 아이콘 표시
+                    resources.getIdentifier("icon_record", "drawable", packageName)
+                }
+                
+                if (iconResId != 0) {
+                    val icon = ContextCompat.getDrawable(this, iconResId)
+                    if (icon != null) {
+                        button.setImageDrawable(icon)
+                    } else {
+                        // icon이 null인 경우 아무것도 하지 않음
+                    }
+                } else {
+                    // iconResId가 0인 경우 아무것도 하지 않음
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("FloatingService", "Failed to update record button icon", e)
+            }
+        }
     }
 
-    // 플로팅 위젯 제거 함수는 더 이상 사용하지 않음
-    @Suppress("UNUSED")
+    // 플로팅 위젯 제거
     private fun stopFloatingWidget() {
         floatingView?.let {
-            windowManager?.removeView(it)
+            try {
+                windowManager?.removeView(it)
+            } catch (e: Exception) {
+                android.util.Log.e("FloatingService", "Error removing floating view", e)
+            }
             floatingView = null
         }
         recordButton = null
@@ -683,7 +734,7 @@ class FloatingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // 플로팅 위젯 제거 코드는 더 이상 필요 없음
+        stopFloatingWidget()
     }
 
     private fun startScreenRecording(intent: Intent?) {
@@ -812,8 +863,8 @@ class FloatingService : Service() {
                 android.util.Log.d("FloatingService", "MediaRecorder started: ${mediaRecorder != null}")
                 android.util.Log.d("FloatingService", "isRecording set to: $isRecording")
                 
-                // 알림 업데이트
-                updateNotification()
+                // 플로팅 위젯 버튼 업데이트
+                updateRecordButton(true)
                 
                 // 녹화 시작 확인을 위한 Toast 메시지 (선택사항)
                 try {
@@ -890,8 +941,8 @@ class FloatingService : Service() {
             
             isRecording = false
             
-            // 알림 업데이트
-            updateNotification()
+            // 플로팅 위젯 버튼 업데이트
+            updateRecordButton(false)
             
             // 녹화 완료 이벤트 전송
             recordingFile?.let { file ->
@@ -1021,11 +1072,6 @@ class FloatingService : Service() {
         }
     }
     
-    // 플로팅 위젯 버튼 업데이트는 더 이상 사용하지 않음 (알림창으로 대체)
-    @Suppress("UNUSED")
-    private fun updateRecordButton(recording: Boolean) {
-        // 알림창 방식으로 변경되어 더 이상 필요 없음
-    }
     
     private fun sendRecordingCompleteEvent(filePath: String, autoStop: Boolean = false) {
         try {
@@ -1095,6 +1141,42 @@ class FloatingService : Service() {
         }
     }
     
+    private fun sendAnalyzingEvent() {
+        try {
+            val app = applicationContext as? ReactApplication
+            val reactContext = app?.reactNativeHost?.reactInstanceManager?.currentReactContext as? com.facebook.react.bridge.ReactApplicationContext
+            reactContext?.let {
+                android.util.Log.d("FloatingService", "분석 시작 이벤트 전송")
+                it.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit("onAnalyzing", Arguments.createMap())
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("FloatingService", "Error in sendAnalyzingEvent", e)
+            e.printStackTrace()
+        }
+    }
+    
+    private fun sendAnalysisResultEvent(result: String, deepfakePercentage: Int, audioPercentage: Int, videoId: String?) {
+        try {
+            val app = applicationContext as? ReactApplication
+            val reactContext = app?.reactNativeHost?.reactInstanceManager?.currentReactContext as? com.facebook.react.bridge.ReactApplicationContext
+            reactContext?.let {
+                val params = Arguments.createMap().apply {
+                    putString("result", result)
+                    putInt("deepfakePercentage", deepfakePercentage)
+                    putInt("audioPercentage", audioPercentage)
+                    putString("videoId", videoId)
+                }
+                android.util.Log.d("FloatingService", "분석 완료 이벤트 전송: result=$result, percentage=$deepfakePercentage%")
+                it.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit("onAnalysisResult", params)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("FloatingService", "Error in sendAnalysisResultEvent", e)
+            e.printStackTrace()
+        }
+    }
+    
     private fun startAutoAnalysis(videoFilePath: String) {
         android.util.Log.d("FloatingService", "=== 자동 분석 시작 ===")
         android.util.Log.d("FloatingService", "비디오 파일: $videoFilePath")
@@ -1106,6 +1188,8 @@ class FloatingService : Service() {
                 notificationState = STATE_ANALYZING
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     updateNotification()
+                    // React Native로 분석 시작 이벤트 전송
+                    sendAnalyzingEvent()
                 }
                 
                 // API URL (개발 환경 기본값, 필요시 SharedPreferences에서 가져오기)
@@ -1170,6 +1254,8 @@ class FloatingService : Service() {
                         this.audioPercentage = audioPercentage
                         this.videoId = videoId
                         updateNotification()
+                        // React Native로 분석 완료 이벤트 전송
+                        sendAnalysisResultEvent(result, deepfakePercentage, audioPercentage, videoId)
                     }
                     
                     android.util.Log.d("FloatingService", "분석 결과: $result, 딥페이크 확률: $deepfakePercentage%, 오디오 확률: $audioPercentage%")

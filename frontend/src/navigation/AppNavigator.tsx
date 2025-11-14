@@ -16,6 +16,7 @@ import CommunityWriteScreen from "../screens/CommunityWriteScreen";
 import CommunityDetailScreen from "../screens/CommunityDetailScreen";
 
 export type RootStackParamList = {
+  Main: undefined;
   Home: undefined;
   Record: { recordedVideoPath?: string; showAnalysisProgress?: boolean } | undefined;
   Upload: undefined;

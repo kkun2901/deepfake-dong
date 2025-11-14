@@ -32,3 +32,11 @@ if (Test-Path "app\build") {
 Write-Host "`n캐시 삭제 완료! 이제 빌드를 시도하세요." -ForegroundColor Green
 
 
+
+
+
+
+
+
+
+

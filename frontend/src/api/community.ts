@@ -105,7 +105,7 @@ export async function uploadCommunityFile(formData: FormData): Promise<Community
     
     // Network Error는 요청이 전송되지 않았음을 의미
     if (error.code === 'ECONNREFUSED' || error.message === 'Network Error' || error.code === 'ERR_NETWORK' || error.message === 'Network request failed') {
-      console.error('[uploadCommunityFile] ⚠️ 요청이 서버에 도달하지 않음');
+      console.error('[uploadCommunityFile] 요청이 서버에 도달하지 않음');
       console.error('[uploadCommunityFile] 백엔드 서버 연결 확인 필요');
       console.error('[uploadCommunityFile] API URL:', `${API_BASE_URL}/community/upload`);
       throw new Error('백엔드 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요.');

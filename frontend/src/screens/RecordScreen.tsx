@@ -16,7 +16,7 @@ import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { StackNavigationProp } from "@react-navigation/stack";
 import type { RootStackParamList } from "../navigation/AppNavigator";
 import { uploadVideoAsync } from "../api/uploadToFirebase";
-import { analyzeVideo } from "../api";
+import { analyzeVideo, downloadDataset } from "../api";
 import { Linking } from "react-native";
 
 type Nav = StackNavigationProp<RootStackParamList, "Record">;

@@ -48,3 +48,11 @@ Write-Host ""
 Write-Host "이제 상위 디렉토리에서 'npm run android'를 실행하세요." -ForegroundColor Cyan
 
 
+
+
+
+
+
+
+
+

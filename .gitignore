@@ -93,3 +93,6 @@ backend/weights/
 *.ckpt
 backend/MesoNet/
 backend/dfdc_deepfake_challenge/
+
+# Manual setup files (contains sensitive files)
+MANUAL_SETUP_FILES/

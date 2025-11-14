@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -11,18 +11,58 @@ import {
   ImageStyle,
   Alert,
   Platform,
-  PermissionsAndroid,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useNavigation } from '@react-navigation/native';
 import { DrawerActions } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { FloatingWidget } from '../utils';
+import { FloatingWidget, FloatingWidgetEvents } from '../utils';
 
 type Nav = StackNavigationProp<RootStackParamList, 'Home'>;
 
 export default function HomeScreen() {
   const navigation = useNavigation<Nav>();
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<{
+    percentage: number;
+    result: 'FAKE' | 'REAL';
+  } | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !FloatingWidgetEvents) {
+      return;
+    }
+
+    // 분석 시작 이벤트 리스너
+    const analyzingListener = FloatingWidgetEvents.addListener(
+      'onAnalyzing',
+      () => {
+        console.log('[HomeScreen] 분석 시작 이벤트 수신');
+        setAnalyzing(true);
+        setAnalysisResult(null);
+      }
+    );
+
+    // 분석 완료 이벤트 리스너
+    const resultListener = FloatingWidgetEvents.addListener(
+      'onAnalysisResult',
+      (data: { result: string; deepfakePercentage: number; audioPercentage: number; videoId: string | null }) => {
+        console.log('[HomeScreen] 분석 완료 이벤트 수신:', data);
+        setAnalyzing(false);
+        setAnalysisResult({
+          percentage: data.deepfakePercentage,
+          result: data.result === 'FAKE' ? 'FAKE' : 'REAL',
+        });
+      }
+    );
+
+    return () => {
+      analyzingListener.remove();
+      resultListener.remove();
+    };
+  }, []);
 
   return (
     <ImageBackground 
@@ -35,7 +75,7 @@ export default function HomeScreen() {
         
         <View style={styles.header}>
         <View style={styles.profileIcon}>
-          <Text style={styles.profileIconText}>👤</Text>
+          <Text style={styles.profileIconText}>U</Text>
         </View>
         <TouchableOpacity 
           style={styles.menuButton}
@@ -112,36 +152,18 @@ export default function HomeScreen() {
                 return;
               }
               
-              // Android 13+ 알림 권한 요청
-              if (Platform.OS === 'android' && Platform.Version >= 33) {
-                try {
-                  // React Native 0.74+에서는 'android.permission.POST_NOTIFICATIONS' 문자열 사용
-                  const POST_NOTIFICATIONS = 'android.permission.POST_NOTIFICATIONS';
-                  
-                  const hasPermission = await PermissionsAndroid.check(POST_NOTIFICATIONS);
-                  
-                  if (!hasPermission) {
-                    const granted = await PermissionsAndroid.request(
-                      POST_NOTIFICATIONS,
-                      {
-                        title: '알림 권한',
-                        message: '딥페이크 탐지 서비스를 사용하려면 알림 권한이 필요합니다.',
-                        buttonNeutral: '나중에',
-                        buttonNegative: '취소',
-                        buttonPositive: '허용',
-                      }
-                    );
-                    
-                    if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-                      Alert.alert(
-                        '권한 필요',
-                        '알림 권한이 필요합니다. 설정에서 권한을 허용해주세요.'
-                      );
-                      return;
-                    }
-                  }
-                } catch (err) {
-                  console.warn('[HomeScreen] 알림 권한 요청 오류:', err);
+              // 오버레이 권한 확인 및 요청
+              const hasOverlayPermission = await FloatingWidget.checkOverlayPermission();
+              
+              if (!hasOverlayPermission) {
+                const granted = await FloatingWidget.requestOverlayPermission();
+                if (!granted) {
+                  Alert.alert(
+                    '권한 필요',
+                    '플로팅 위젯을 사용하려면 "다른 앱 위에 표시" 권한이 필요합니다.\n\n' +
+                    '설정에서 권한을 허용한 후 다시 시도해주세요.'
+                  );
+                  return;
                 }
               }
               
@@ -151,10 +173,11 @@ export default function HomeScreen() {
                 console.log('[HomeScreen] 서비스 시작 완료');
                 Alert.alert(
                   '서비스 시작', 
-                  '알림창에 딥페이크 탐지 서비스가 표시됩니다.\n\n' +
-                  '알림창에서 다음 기능을 사용할 수 있습니다:\n' +
-                  '- 비디오: 화면 녹화 시작/중지\n' +
-                  '- 녹화 종료 시 자동으로 분석됩니다'
+                  '플로팅 위젯이 화면에 표시됩니다.\n\n' +
+                  '위젯을 클릭하여 다음 기능을 사용할 수 있습니다:\n' +
+                  '- 녹화: 화면 녹화 시작/중지\n' +
+                  '- 캡처: 화면 캡처\n' +
+                  '- 종료: 서비스 종료'
                 );
               } catch (serviceError) {
                 console.error('[HomeScreen] 서비스 시작 오류:', serviceError);
@@ -167,13 +190,9 @@ export default function HomeScreen() {
           }}
           activeOpacity={0.8}
         >
-          <ImageBackground 
-            source={require('../assets/login.bar.background.png')}
-            style={styles.switchButtonBackground}
-            resizeMode="stretch"
-          >
-            <Text style={styles.switchButtonText}>SWITCH ON!</Text>
-          </ImageBackground>
+          <View style={styles.switchButtonBackground}>
+            <Text style={styles.switchButtonText}>직접 녹화</Text>
+          </View>
         </TouchableOpacity>
 
         {/* 업로드하여 탐지 버튼 */}
@@ -182,15 +201,56 @@ export default function HomeScreen() {
           onPress={() => navigation.navigate('Upload')}
           activeOpacity={0.8}
         >
-          <ImageBackground 
-            source={require('../assets/login.bar.background.png')}
-            style={styles.switchButtonBackground}
-            resizeMode="stretch"
-          >
-            <Text style={styles.switchButtonText}>영상으로 탐지</Text>
-          </ImageBackground>
+          <View style={styles.uploadButtonBackground}>
+            <Text style={styles.uploadButtonText}>영상으로 탐지</Text>
+          </View>
         </TouchableOpacity>
       </View>
+
+      {/* 분석 결과 Modal */}
+      <Modal
+        visible={analyzing || analysisResult !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          setAnalyzing(false);
+          setAnalysisResult(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {analyzing ? (
+              <>
+                <ActivityIndicator size="large" color="#2563eb" />
+                <Text style={styles.modalTitle}>분석 중</Text>
+                <Text style={styles.modalSubtitle}>영상을 분석하고 있습니다.</Text>
+                <Text style={styles.modalSubtitle}>잠시만 기다려주세요...</Text>
+              </>
+            ) : analysisResult !== null ? (
+              <>
+                <Text style={styles.modalTitle}>분석 완료</Text>
+                <Text style={styles.modalResultPercentage}>{analysisResult.percentage}%</Text>
+                <Text style={styles.modalResultLabel}>딥페이크 확률</Text>
+                <Text style={styles.modalResultText}>
+                  이 영상은 {analysisResult.result === 'FAKE' ? '가짜' : '진짜'}입니다
+                </Text>
+                <TouchableOpacity
+                  style={styles.modalButton}
+                  onPress={() => {
+                    setAnalysisResult(null);
+                    setAnalyzing(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.modalButtonBackground}>
+                    <Text style={styles.modalButtonText}>확인</Text>
+                  </View>
+                </TouchableOpacity>
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
     </ImageBackground>
   );
@@ -303,9 +363,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 18,
+    backgroundColor: '#2563eb', // 파란색
+    borderWidth: 2,
+    borderColor: '#FFFFFF', // 흰색 윤곽선
+    borderRadius: 10,
   },
   switchButtonText: {
-    color: '#000000', // 흰색 배경에 검은 글씨
+    color: '#FFFFFF', // 하얀색 텍스트
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 2,
+  },
+  uploadButtonBackground: {
+    width: '100%',
+    height: 70,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 18,
+    backgroundColor: '#000000', // 검은색
+    borderWidth: 2,
+    borderColor: '#FFFFFF', // 흰색 윤곽선
+    borderRadius: 10,
+  },
+  uploadButtonText: {
+    color: '#FFFFFF', // 하얀색 텍스트
     fontSize: 24,
     fontWeight: '800',
     letterSpacing: 2,
@@ -343,4 +424,67 @@ const styles = StyleSheet.create({
     width: 150,
     height: 150,
   } as ImageStyle,
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#1f2937',
+    borderRadius: 20,
+    padding: 32,
+    alignItems: 'center',
+    minWidth: 300,
+    maxWidth: '80%',
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  modalSubtitle: {
+    fontSize: 16,
+    color: '#9ca3af',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  modalResultPercentage: {
+    fontSize: 64,
+    fontWeight: 'bold',
+    color: '#2563eb',
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  modalResultLabel: {
+    fontSize: 18,
+    color: '#9ca3af',
+    marginBottom: 16,
+  },
+  modalResultText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#fff',
+    marginBottom: 32,
+    textAlign: 'center',
+  },
+  modalButton: {
+    width: '100%',
+    height: 50,
+  },
+  modalButtonBackground: {
+    width: '100%',
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#2563eb',
+    borderRadius: 10,
+  },
+  modalButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
 });
