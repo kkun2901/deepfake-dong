@@ -50,33 +50,37 @@ def _load_efficientnet_model():
 # ==================== MesoNet 모델 ====================
 
 class Meso4(nn.Module):
-    """MesoNet 모델 구조 (Meso4)"""
-    def __init__(self, num_classes=2):
+    """MesoNet-4 모델 구조 (256x256 입력용, 튜닝된 버전)"""
+    def __init__(self, num_classes=2, dropout_rate=0.4):
         super(Meso4, self).__init__()
+        # 첫 번째 블록
         self.conv1 = nn.Conv2d(3, 8, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(8)
         self.conv2 = nn.Conv2d(8, 8, kernel_size=5, padding=2)
         self.bn2 = nn.BatchNorm2d(8)
-        self.pool1 = nn.MaxPool2d(2, 2)
-        self.drop1 = nn.Dropout2d(0.25)
+        self.pool1 = nn.MaxPool2d(2, 2)  # 256 -> 128
+        self.drop1 = nn.Dropout2d(dropout_rate)
         
+        # 두 번째 블록
         self.conv3 = nn.Conv2d(8, 16, kernel_size=5, padding=2)
         self.bn3 = nn.BatchNorm2d(16)
         self.conv4 = nn.Conv2d(16, 16, kernel_size=5, padding=2)
         self.bn4 = nn.BatchNorm2d(16)
-        self.pool2 = nn.MaxPool2d(2, 2)
-        self.drop2 = nn.Dropout2d(0.25)
+        self.pool2 = nn.MaxPool2d(2, 2)  # 128 -> 64
+        self.drop2 = nn.Dropout2d(dropout_rate)
         
+        # 세 번째 블록
         self.conv5 = nn.Conv2d(16, 16, kernel_size=5, padding=2)
         self.bn5 = nn.BatchNorm2d(16)
         self.conv6 = nn.Conv2d(16, 16, kernel_size=5, padding=2)
         self.bn6 = nn.BatchNorm2d(16)
-        self.pool3 = nn.MaxPool2d(2, 2)
-        self.drop3 = nn.Dropout2d(0.25)
+        self.pool3 = nn.MaxPool2d(2, 2)  # 64 -> 32
+        self.drop3 = nn.Dropout2d(dropout_rate)
         
-        self.fc1 = nn.Linear(16 * 28 * 28, 16)  # 224/8 = 28
+        # Fully Connected (256x256 -> 32x32 after 3 pools)
+        self.fc1 = nn.Linear(16 * 32 * 32, 16)
         self.bn7 = nn.BatchNorm1d(16)
-        self.drop4 = nn.Dropout(0.5)
+        self.drop4 = nn.Dropout(dropout_rate)
         self.fc2 = nn.Linear(16, num_classes)
     
     def forward(self, x):
@@ -108,18 +112,21 @@ meso_model = None
 models_loaded = False
 loading_lock = threading.Lock()
 
-# EfficientNet 전처리 (ImageNet 정규화)
+# EfficientNet 전처리 (224x224, ImageNet 정규화)
+EFFICIENTNET_IMAGE_SIZE = 224
 eff_transform = transforms.Compose([
-    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+    transforms.Resize((EFFICIENTNET_IMAGE_SIZE, EFFICIENTNET_IMAGE_SIZE)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-# MesoNet 전처리
+# MesoNet 전처리 (256x256, 튜닝된 모델용)
+# 학습 시 사용한 전처리와 동일하게 설정
+MESONET_IMAGE_SIZE = 256
 meso_transform = transforms.Compose([
-    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+    transforms.Resize((256, 256)),  # 튜닝된 모델 입력 크기
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # -1~1 정규화 (학습 시와 동일)
 ])
 
 def _crop_face(image: np.ndarray):
@@ -195,9 +202,9 @@ def load_models():
             
             eff_model.to(device).eval()
             
-            # MesoNet 로드 (선택적)
+            # MesoNet 로드 (튜닝된 모델)
             print(f"[2/2] MesoNet 로딩 중...")
-            meso_model = Meso4(num_classes=2)
+            meso_model = Meso4(num_classes=2, dropout_rate=0.4)
             
             # MesoNet 가중치가 있으면 로드, 없으면 랜덤 초기화
             if Path(MESONET_WEIGHTS).exists():
@@ -205,14 +212,16 @@ def load_models():
                 checkpoint = torch.load(MESONET_WEIGHTS, map_location=device)
                 
                 if isinstance(checkpoint, dict):
-                    state_dict = checkpoint.get('state_dict', checkpoint.get('model', checkpoint))
+                    state_dict = checkpoint.get('model_state_dict', 
+                                               checkpoint.get('state_dict', 
+                                                             checkpoint.get('model', checkpoint)))
                 else:
                     state_dict = checkpoint
                 
                 cleaned = {k.replace('module.', '').replace('model.', ''): v 
                           for k, v in state_dict.items()}
-                meso_model.load_state_dict(cleaned, strict=False)
-                print("  ✓ MesoNet 로딩 완료")
+                meso_model.load_state_dict(cleaned, strict=True)
+                print("  ✓ MesoNet (튜닝된 모델) 로딩 완료")
             else:
                 print(f"  - MesoNet 가중치 없음, 랜덤 초기화 사용")
                 print("  ⚠ 참고: MesoNet 가중치 없이는 앙상블 성능이 저하될 수 있습니다.")

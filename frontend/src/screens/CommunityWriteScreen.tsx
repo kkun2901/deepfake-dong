@@ -58,6 +58,34 @@ export default function CommunityWriteScreen() {
     }
   };
 
+  const detectFileType = () => {
+    if (!selectedFile) return 'text';
+
+    const mime = selectedFile.type?.toLowerCase() || '';
+    const name = selectedFile.name?.toLowerCase() || '';
+
+    if (mime.startsWith('image/') || name.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/)) {
+      return 'image';
+    }
+    if (mime.startsWith('video/') || name.match(/\.(mp4|mov|m4v|avi|mkv|webm)$/)) {
+      return 'video';
+    }
+    if (name.match(/\.(zip|rar|7z|jsonl|csv|txt|tsv)$/)) {
+      return 'dataset';
+    }
+
+    return 'file';
+  };
+
+  const buildMetadata = () => {
+    const payload = {
+      title: title.trim(),
+      description: description.trim(),
+      file_type: detectFileType(),
+    };
+    return JSON.stringify(payload);
+  };
+
   // 글 작성
   const handleSubmit = async () => {
     if (!title.trim()) {
@@ -92,9 +120,11 @@ export default function CommunityWriteScreen() {
       // - 파일 없는 경우: user_id + title + description + file_type (텍스트만이므로 가능)
       
       const formData = new FormData();
+      const metadata = buildMetadata();
       
-      // 1. user_id 필드 (analyzeVideo와 동일)
+      // 1. user_id 필드
       formData.append('user_id', 'user123'); // TODO: 실제 사용자 ID 사용
+      formData.append('metadata', metadata);
       
       // 2. 파일 필드 (파일이 있는 경우)
       // 메타데이터를 파일명에 인코딩: "encoded_metadata|original_filename"
@@ -128,10 +158,14 @@ export default function CommunityWriteScreen() {
           
           // ⚠️ 핵심: analyzeVideo와 완전히 동일한 방식으로 파일 처리
           // 필드 이름, 파일명, 타입 모두 analyzeVideo와 동일하게 설정
+          let mimeType = selectedFile.type;
+          if (mimeType && !mimeType.includes('/')) {
+            mimeType = mimeType === 'image' ? 'image/jpeg' : mimeType === 'video' ? 'video/mp4' : 'application/octet-stream';
+          }
           const fileData = {
             uri: selectedFile.uri,
-            name: 'video.mp4', // analyzeVideo처럼 단순한 파일명 사용
-            type: 'video/mp4', // analyzeVideo처럼 명시적으로 타입 지정
+            name: selectedFile.name || 'upload.bin',
+            type: mimeType || 'application/octet-stream',
           };
           
           console.log('[CommunityWriteScreen] FormData에 파일 추가 (analyzeVideo와 완전히 동일):', {
@@ -140,11 +174,9 @@ export default function CommunityWriteScreen() {
             type: fileData.type,
           });
           
-          // ⚠️ 중요: analyzeVideo처럼 필드 이름도 'video'로 변경하여 테스트
-          // 백엔드가 'file' 필드를 기대하지만, 일단 'video'로 테스트해봄
           formData.append('file', fileData as any);
           
-          console.log('[CommunityWriteScreen] analyzeVideo와 동일한 방식으로 전송 (필드: user_id + file)');
+          console.log('[CommunityWriteScreen] FormData 필드 - user_id + metadata + file');
         } catch (fileError: any) {
           console.error('[CommunityWriteScreen] 파일 처리 오류:', fileError);
           Alert.alert('오류', `파일을 처리할 수 없습니다: ${fileError.message}`);
@@ -152,14 +184,6 @@ export default function CommunityWriteScreen() {
           return;
         }
       } else {
-        // 파일이 없는 경우: 텍스트 게시글
-        // analyzeVideo처럼 2개 필드만 사용: user_id + metadata
-        const metadata = JSON.stringify({
-          title: title.trim(),
-          description: description.trim(),
-          file_type: 'text',
-        });
-        formData.append('metadata', metadata);
         console.log('[CommunityWriteScreen] metadata 필드 추가 (텍스트 게시글):', metadata.substring(0, 100) + '...');
       }
 

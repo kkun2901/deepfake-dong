@@ -6,14 +6,15 @@ import {
   TouchableOpacity, 
   SafeAreaView,
   StatusBar,
-  Image,
-  ImageBackground,
-  ImageStyle,
   Alert,
   Platform,
   Modal,
   ActivityIndicator,
+  ImageStyle,
+  useWindowDimensions,
 } from 'react-native';
+import { SvgXml } from 'react-native-svg';
+import { Asset } from 'expo-asset';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useNavigation } from '@react-navigation/native';
 import { DrawerActions } from '@react-navigation/native';
@@ -22,6 +23,11 @@ import { FloatingWidget, FloatingWidgetEvents } from '../utils';
 
 type Nav = StackNavigationProp<RootStackParamList, 'Home'>;
 
+// SVG 원본 사이즈 (px)
+const DESIGN_WIDTH = 824;
+const DESIGN_HEIGHT = 1834;
+const DESIGN_ASPECT = DESIGN_WIDTH / DESIGN_HEIGHT;
+
 export default function HomeScreen() {
   const navigation = useNavigation<Nav>();
   const [analyzing, setAnalyzing] = useState(false);
@@ -29,6 +35,37 @@ export default function HomeScreen() {
     percentage: number;
     result: 'FAKE' | 'REAL';
   } | null>(null);
+  const [backgroundSvg, setBackgroundSvg] = useState<string | null>(null);
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const scale = Math.max(screenWidth / DESIGN_WIDTH, screenHeight / DESIGN_HEIGHT);
+  const backgroundWidth = Math.ceil(DESIGN_WIDTH * scale);
+  const backgroundHeight = Math.ceil(DESIGN_HEIGHT * scale);
+  const horizontalOffset = Math.ceil((backgroundWidth - screenWidth) / 2);
+  const verticalOffset = Math.ceil((backgroundHeight - screenHeight) / 2);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadBackground = async () => {
+      try {
+        const asset = Asset.fromModule(require('../assets/home-background.svg'));
+        await asset.downloadAsync();
+        const response = await fetch(asset.localUri ?? asset.uri);
+        const svgText = await response.text();
+        if (isMounted) {
+          setBackgroundSvg(svgText);
+        }
+      } catch (error) {
+        console.error('[HomeScreen] 배경 SVG 로드 실패:', error);
+      }
+    };
+
+    loadBackground();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !FloatingWidgetEvents) {
@@ -65,11 +102,24 @@ export default function HomeScreen() {
   }, []);
 
   return (
-    <ImageBackground 
-      source={require('../assets/home-background.png')}
-      style={styles.backgroundImage}
-      resizeMode="cover"
-    >
+    <View style={styles.backgroundContainer}>
+      {backgroundSvg && (
+        <SvgXml
+          xml={backgroundSvg}
+          width={backgroundWidth}
+          height={backgroundHeight}
+          preserveAspectRatio="xMidYMid meet"
+          style={[
+            styles.backgroundSvg,
+            {
+              width: backgroundWidth,
+              height: backgroundHeight,
+              left: -horizontalOffset,
+              top: -verticalOffset,
+            },
+          ]}
+        />
+      )}
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
         
@@ -252,15 +302,20 @@ export default function HomeScreen() {
         </View>
       </Modal>
     </SafeAreaView>
-    </ImageBackground>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  backgroundImage: {
+  backgroundContainer: {
     flex: 1,
-    width: '100%',
-    height: '100%',
+    backgroundColor: '#000000',
+  },
+  backgroundSvg: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    pointerEvents: 'none',
   },
   container: {
     flex: 1,
@@ -363,13 +418,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 18,
-    backgroundColor: '#2563eb', // 파란색
-    borderWidth: 2,
-    borderColor: '#FFFFFF', // 흰색 윤곽선
+    backgroundColor: '#FFFFFF',
+    borderWidth: 0,
     borderRadius: 10,
   },
   switchButtonText: {
-    color: '#FFFFFF', // 하얀색 텍스트
+    color: '#000000',
     fontSize: 24,
     fontWeight: '800',
     letterSpacing: 2,
@@ -380,13 +434,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 18,
-    backgroundColor: '#000000', // 검은색
-    borderWidth: 2,
-    borderColor: '#FFFFFF', // 흰색 윤곽선
+    backgroundColor: '#FFC628',
+    borderWidth: 0,
     borderRadius: 10,
   },
   uploadButtonText: {
-    color: '#FFFFFF', // 하얀색 텍스트
+    color: '#000000',
     fontSize: 24,
     fontWeight: '800',
     letterSpacing: 2,

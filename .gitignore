@@ -94,5 +94,17 @@ backend/weights/
 backend/MesoNet/
 backend/dfdc_deepfake_challenge/
 
+# Datasets (large files)
+dataset/
+dataset_*/
+dataset_small/
+dataset_mini/
+dataset_full/
+backend/*.zip
+*.mp4
+*.avi
+*.mov
+*.mkv
+
 # Manual setup files (contains sensitive files)
 MANUAL_SETUP_FILES/

@@ -59,3 +59,6 @@ cd [저장소 이름]
 
 그 다음 [SETUP_NEW_COMPUTER.md](./SETUP_NEW_COMPUTER.md) 파일을 참고하여 설정하세요.
 
+
+
+

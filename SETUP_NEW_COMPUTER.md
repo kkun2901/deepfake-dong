@@ -194,3 +194,6 @@ deepfake-detector-app-main/
 - 환경 변수 설정 (JAVA_HOME, ANDROID_HOME 등)
 - 방화벽 설정 (백엔드 서버 포트 8000)
 
+
+
+

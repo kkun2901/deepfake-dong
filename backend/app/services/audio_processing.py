@@ -55,34 +55,24 @@ class AudioProcessor:
         self.wav2vec2_model = None
         self.wav2vec2_tokenizer = None
         self.sentence_bert = None
-        
-        print("음성 분석 프로세서가 초기화되었습니다.")
     
     def load_models(self):
         """메모리 효율적인 모델 로딩"""
         try:
             if self.whisper_model is None and WHISPER_AVAILABLE:
-                print("Whisper 모델 로딩 중...")
                 self.whisper_model = whisper.load_model("base")
-                print("Whisper 모델 로딩 완료!")
             
             if self.wav2vec2_model is None:
-                print("Wav2Vec2 모델 로딩 중...")
                 self.wav2vec2_model = AutoModel.from_pretrained(
                     "facebook/wav2vec2-base",
-                    torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32
+                    dtype=torch.float16 if self.device.type == "cuda" else torch.float32
                 ).to(self.device)
                 self.wav2vec2_tokenizer = AutoTokenizer.from_pretrained("facebook/wav2vec2-base")
-                print("Wav2Vec2 모델 로딩 완료!")
             
             if self.sentence_bert is None and SENTENCE_BERT_AVAILABLE:
-                print("Sentence-BERT 모델 로딩 중...")
                 self.sentence_bert = SentenceTransformer("nickprock/csr-multi-sentence-BERTino-cv")
-                print("Sentence-BERT 모델 로딩 완료!")
-        except Exception as e:
-            print(f"모델 로딩 중 오류 발생: {e}")
-            # 메모리 부족 시 일부 모델만 로딩
-            print("메모리 절약을 위해 일부 기능을 비활성화합니다.")
+        except Exception:
+            pass
 
     def extract_audio_from_video(self, video_path: str) -> str:
         """비디오에서 오디오 추출"""
@@ -98,8 +88,7 @@ class AudioProcessor:
             sf.write(temp_audio_path, audio_data, sample_rate)
             
             return temp_audio_path
-        except Exception as e:
-            print(f"오디오 추출 실패: {e}")
+        except Exception:
             # librosa.output.write_wav 대신 다른 방법 시도
             try:
                 import soundfile as sf
@@ -107,8 +96,7 @@ class AudioProcessor:
                 temp_audio_path = os.path.join(tempfile.gettempdir(), f"temp_audio_{os.path.basename(video_path)}.wav")
                 sf.write(temp_audio_path, audio_data, sample_rate)
                 return temp_audio_path
-            except Exception as e2:
-                print(f"대체 오디오 추출도 실패: {e2}")
+            except Exception:
                 return None
 
     def transcribe_audio(self, audio_path: str) -> str:
@@ -169,8 +157,7 @@ class AudioProcessor:
                 "zero_crossing_rate_mean": float(zcr_mean),
                 "duration": len(y) / sr
             }
-        except Exception as e:
-            print(f"음성 특징 추출 실패: {e}")
+        except Exception:
             return {}
 
     def detect_deepvoice_wav2vec2(self, audio_path: str) -> Dict:
@@ -205,8 +192,7 @@ class AudioProcessor:
                     "confidence": float(confidence),
                     "feature_variance": float(feature_variance)
                 }
-        except Exception as e:
-            print(f"Wav2Vec2 딥보이스 탐지 실패: {e}")
+        except Exception:
             return {"is_deepvoice": False, "confidence": 0.0, "feature_variance": 0.0}
 
     def analyze_speech_text_semantic_mismatch(self, audio_path: str, transcribed_text: str) -> Dict:
@@ -248,15 +234,12 @@ class AudioProcessor:
                 "similarity": float(avg_similarity),
                 "sentence_count": len(sentences)
             }
-        except Exception as e:
-            print(f"의미적 불일치 분석 실패: {e}")
+        except Exception:
             return {"semantic_mismatch": False, "confidence": 0.0, "similarity": 0.0}
 
     def analyze_audio(self, video_path: str) -> Dict:
         """전체 음성 분석 수행"""
         try:
-            print(f"음성 분석 시작: {video_path}")
-            
             # 모델들을 먼저 로드
             self.load_models()
             

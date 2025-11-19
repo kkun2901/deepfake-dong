@@ -4,12 +4,15 @@ import android.app.*
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.Image
@@ -18,35 +21,47 @@ import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.util.Base64
 import android.widget.FrameLayout
-import android.widget.Button
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
-import android.graphics.drawable.BitmapDrawable
-import java.io.InputStream
+import android.widget.Button
 import androidx.core.app.NotificationCompat
+import com.caverock.androidsvg.SVG
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.ReactApplication
+import kotlin.math.roundToInt
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.asRequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.TimeUnit
 
 class FloatingService : Service() {
-    // 플로팅 위젯 관련 변수
     private var windowManager: WindowManager? = null
     private var floatingView: FrameLayout? = null
-    private var recordButton: ImageButton? = null
+    private var mainButtonView: View? = null
+    private var resultIconView: ImageView? = null
+    private var recordButton: ImageButton? = null  // 버튼 참조 저장
     private var isExpanded = false
     private var isRecording = false
     private var mediaProjection: MediaProjection? = null
@@ -60,6 +75,43 @@ class FloatingService : Service() {
     private var recordingHandler: android.os.Handler? = null
     private val MAX_RECORDING_DURATION_MS = 15_000L // 15초
     private var recordActionInProgress: Boolean = false
+    private val backendBaseUrl = if (BuildConfig.DEBUG) {
+        "http://10.56.56.21:8000"
+    } else {
+        "https://your-production-url.com"
+    }
+    private val analysisClient: OkHttpClient = OkHttpClient.Builder()
+        .callTimeout(120, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
+        .build()
+    private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var analysisOverlay: AnalysisOverlayComponents? = null
+    private var analysisOverlayParams: WindowManager.LayoutParams? = null
+    private var lastAnalysisFilePath: String? = null
+    private var lastAnalysisVideoId: String? = null
+    private var widgetAnalysisInProgress: Boolean = false
+    private val loadingFrameNames = arrayOf("loding1", "loding2", "loding3", "loding4")
+    private var loadingFrameIndex = 0
+    private var loadingAnimationRunning = false
+    private val loadingAnimationRunnable = object : Runnable {
+        override fun run() {
+            if (!loadingAnimationRunning) return
+            val overlay = analysisOverlay ?: return
+            overlay.loadingImages.forEachIndexed { index, imageView ->
+                if (index == loadingFrameIndex) {
+                    imageView.visibility = View.VISIBLE
+                    imageView.setImageDrawable(loadIconDrawable(loadingFrameNames[index]))
+                } else {
+                    imageView.visibility = View.INVISIBLE
+                }
+            }
+            loadingFrameIndex = (loadingFrameIndex + 1) % loadingFrameNames.size
+            mainHandler.postDelayed(this, 250L)
+        }
+    }
     
     companion object {
         // Service Actions
@@ -69,11 +121,6 @@ class FloatingService : Service() {
         const val ACTION_START_RECORDING = "com.anonymous.deepfakeapp.START_RECORDING"
         const val ACTION_STOP_RECORDING = "com.anonymous.deepfakeapp.STOP_RECORDING"
         const val ACTION_CAPTURE_FRAME = "com.anonymous.deepfakeapp.CAPTURE_FRAME"
-        const val ACTION_RECORD_FROM_NOTIFICATION = "com.anonymous.deepfakeapp.RECORD_FROM_NOTIFICATION"
-        const val ACTION_CAPTURE_FROM_NOTIFICATION = "com.anonymous.deepfakeapp.CAPTURE_FROM_NOTIFICATION"
-        const val ACTION_UPLOAD_FROM_NOTIFICATION = "com.anonymous.deepfakeapp.UPLOAD_FROM_NOTIFICATION"
-        const val ACTION_VIDEO_RECORD_FROM_NOTIFICATION = "com.anonymous.deepfakeapp.VIDEO_RECORD_FROM_NOTIFICATION"
-        const val ACTION_VIEW_RESULT = "com.anonymous.deepfakeapp.VIEW_RESULT"
         const val ACTION_UPDATE_UPLOADING = "com.anonymous.deepfakeapp.UPDATE_UPLOADING"
         const val ACTION_UPDATE_ANALYZING = "com.anonymous.deepfakeapp.UPDATE_ANALYZING"
         const val ACTION_UPDATE_ANALYSIS_RESULT = "com.anonymous.deepfakeapp.UPDATE_ANALYSIS_RESULT"
@@ -81,21 +128,23 @@ class FloatingService : Service() {
         // Notification
         const val CHANNEL_ID = "floating_widget_channel"
         const val NOTIFICATION_ID = 1001
-        
-        // Notification States
-        const val STATE_INITIAL = "initial"
-        const val STATE_UPLOADING = "uploading"
-        const val STATE_ANALYZING = "analyzing"
-        const val STATE_COMPLETED = "completed"
     }
-    
-    // 알림 상태 관리
-    private var notificationState = STATE_INITIAL
-    private var uploadProgress = 0
-    private var analysisResult: String? = null
-    private var deepfakePercentage = 0
-    private var audioPercentage = 0
-    private var videoId: String? = null
+
+    private data class AnalysisOverlayComponents(
+        val container: FrameLayout,
+        val loadingImages: List<ImageView>,
+        val statusText: TextView,
+        val percentageText: TextView,
+        val detailText: TextView,
+        val progressBar: ProgressBar,
+        val closeButton: Button,
+        val openAppButton: Button
+    )
+    private data class NativeAnalysisResult(
+        val percentage: Int,
+        val videoId: String?,
+        val rawJson: JSONObject
+    )
 
     override fun onCreate() {
         super.onCreate()
@@ -113,110 +162,31 @@ class FloatingService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 android.util.Log.d("FloatingService", "=== ACTION_START 처리 시작 ===")
-                // 플로팅 위젯 표시
+                // 위젯 표시를 먼저 수행 (foreground service보다 우선)
+                android.util.Log.d("FloatingService", "showFloatingWidget() 호출")
                 showFloatingWidget()
-                return START_STICKY
+                android.util.Log.d("FloatingService", "showFloatingWidget() 완료")
+                
+                // Foreground service는 위젯 표시 후에 시도 (권한이 없어도 위젯은 이미 표시됨)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        // Android 14+에서는 foregroundServiceType을 명시해야 하지만,
+                        // 권한이 없어도 위젯은 이미 표시되었으므로 시도만 함
+                        startForeground(NOTIFICATION_ID, createNotification())
+                        android.util.Log.d("FloatingService", "Foreground service started for ACTION_START")
+                    } catch (e: Exception) {
+                        android.util.Log.w("FloatingService", "Foreground service 시작 실패 (권한 없음), 하지만 위젯은 이미 표시됨", e)
+                        // 위젯은 이미 표시되었으므로 계속 진행
+                    }
+                }
             }
             ACTION_STOP -> {
                 stopFloatingWidget()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
-                return START_NOT_STICKY
             }
-            ACTION_UPLOAD_FROM_NOTIFICATION -> {
-                android.util.Log.d("FloatingService", "=== ACTION_UPLOAD_FROM_NOTIFICATION received ===")
-                // "업로드" 버튼 = 녹화 시작 후 자동 분석
-                if (isRecording) {
-                    // 이미 녹화 중이면 무시
-                    android.util.Log.d("FloatingService", "이미 녹화 중이므로 무시")
-                    return START_STICKY
-                }
-                
-                // 상태를 초기 상태로 리셋
-                notificationState = STATE_INITIAL
-                analysisResult = null
-                deepfakePercentage = 0
-                audioPercentage = 0
-                videoId = null
-                
-                // 녹화 시작 (자동 분석 플래그 설정)
-                val recordIntent = Intent(this, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    action = "START_RECORDING_WITH_ANALYSIS"
-                }
-                startActivity(recordIntent)
-                return START_STICKY
-            }
-            ACTION_VIDEO_RECORD_FROM_NOTIFICATION -> {
-                android.util.Log.d("FloatingService", "=== ACTION_VIDEO_RECORD_FROM_NOTIFICATION received ===")
-                if (isRecording) {
-                    // 녹화 중이면 중지
-                    stopScreenRecording()
-                } else {
-                    // 녹화 중이 아니면 시작 (MediaProjection 권한 요청)
-                    val recordIntent = Intent(this, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        action = "START_RECORDING"
-                    }
-                    startActivity(recordIntent)
-                }
-                return START_STICKY
-            }
-            ACTION_VIEW_RESULT -> {
-                android.util.Log.d("FloatingService", "=== ACTION_VIEW_RESULT received ===")
-                // MainActivity로 이동하여 결과 화면 열기
-                val resultIntent = Intent(this, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    action = "VIEW_RESULT"
-                    putExtra("videoId", videoId)
-                }
-                startActivity(resultIntent)
-                return START_STICKY
-            }
-            ACTION_UPDATE_UPLOADING -> {
-                android.util.Log.d("FloatingService", "=== ACTION_UPDATE_UPLOADING received ===")
-                notificationState = STATE_UPLOADING
-                uploadProgress = intent?.getIntExtra("progress", 0) ?: 0
-                updateNotification()
-                return START_STICKY
-            }
-            ACTION_UPDATE_ANALYZING -> {
-                android.util.Log.d("FloatingService", "=== ACTION_UPDATE_ANALYZING received ===")
-                notificationState = STATE_ANALYZING
-                updateNotification()
-                return START_STICKY
-            }
-            ACTION_UPDATE_ANALYSIS_RESULT -> {
-                android.util.Log.d("FloatingService", "=== ACTION_UPDATE_ANALYSIS_RESULT received ===")
-                notificationState = STATE_COMPLETED
-                deepfakePercentage = intent?.getIntExtra("deepfakePercentage", 0) ?: 0
-                audioPercentage = intent?.getIntExtra("audioPercentage", 0) ?: 0
-                analysisResult = intent?.getStringExtra("result") ?: "REAL"
-                videoId = intent?.getStringExtra("videoId")
-                updateNotification()
-                return START_STICKY
-            }
-            ACTION_RECORD_FROM_NOTIFICATION -> {
-                android.util.Log.d("FloatingService", "=== ACTION_RECORD_FROM_NOTIFICATION received ===")
-                // MainActivity로 이동하여 MediaProjection 권한 요청
-                val recordIntent = Intent(this, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    action = "START_RECORDING"
-                }
-                startActivity(recordIntent)
-                // 알림 업데이트
-                updateNotification()
-                return START_STICKY
-            }
-            ACTION_CAPTURE_FROM_NOTIFICATION -> {
-                android.util.Log.d("FloatingService", "=== ACTION_CAPTURE_FROM_NOTIFICATION received ===")
-                // MainActivity로 이동하여 MediaProjection 권한 요청
-                val captureIntent = Intent(this, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    action = "CAPTURE_FRAME"
-                }
-                startActivity(captureIntent)
-                return START_STICKY
+            ACTION_TOGGLE_MENU -> {
+                toggleMenu()
             }
             ACTION_START_RECORDING -> {
                 android.util.Log.d("FloatingService", "=== ACTION_START_RECORDING received ===")
@@ -236,15 +206,28 @@ class FloatingService : Service() {
                 }
                 
                 startScreenRecording(intent)
-                return START_STICKY
             }
             ACTION_STOP_RECORDING -> {
                 stopScreenRecording()
-                return START_STICKY
             }
             ACTION_CAPTURE_FRAME -> {
                 captureFrame(intent)
-                return START_STICKY
+            }
+            ACTION_UPDATE_UPLOADING -> {
+                // 업로드 진행률 업데이트 (필요시 구현)
+                val progress = intent?.getIntExtra("progress", 0) ?: 0
+                android.util.Log.d("FloatingService", "Upload progress: $progress%")
+            }
+            ACTION_UPDATE_ANALYZING -> {
+                // 분석 중 상태 업데이트 (필요시 구현)
+                android.util.Log.d("FloatingService", "Analysis in progress")
+            }
+            ACTION_UPDATE_ANALYSIS_RESULT -> {
+                // 분석 결과 업데이트 (필요시 구현)
+                val result = intent?.getStringExtra("result") ?: ""
+                val deepfakePercentage = intent?.getIntExtra("deepfakePercentage", 0) ?: 0
+                val audioPercentage = intent?.getIntExtra("audioPercentage", 0) ?: 0
+                android.util.Log.d("FloatingService", "Analysis result: $result, deepfake: $deepfakePercentage%, audio: $audioPercentage%")
             }
         }
         return START_STICKY
@@ -256,13 +239,11 @@ class FloatingService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "딥페이크 탐지 서비스",
-                NotificationManager.IMPORTANCE_DEFAULT  // IMPORTANCE_LOW는 알림이 표시되지 않을 수 있음
+                "Floating Widget Service",
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "딥페이크 탐지 서비스가 실행 중입니다"
-                setShowBadge(true)
-                setSound(null, null)
-                enableVibration(false)
+                description = "Floating widget service is running"
+                setShowBadge(false)
             }
             val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(channel)
@@ -270,125 +251,12 @@ class FloatingService : Service() {
     }
 
     private fun createNotification(): Notification {
-        // 앱으로 이동하는 Intent
-        val appIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val appPendingIntent = PendingIntent.getActivity(
-            this, 0, appIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        
+        // Android 14+에서는 foregroundServiceType을 명시해야 함
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Floating Widget")
+            .setContentText("위젯이 실행 중입니다")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setOngoing(true) // 계속 표시되는 알림
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setContentIntent(appPendingIntent) // 알림 클릭 시 앱으로 이동
-            .setAutoCancel(false) // 자동으로 사라지지 않음
-        
-        // 비디오 녹화 버튼 (모든 상태에서 표시, 녹화 중/중지 토글)
-        val videoRecordIntent = Intent(this, FloatingService::class.java).apply {
-            action = ACTION_VIDEO_RECORD_FROM_NOTIFICATION
-        }
-        val videoRecordPendingIntent = PendingIntent.getService(
-            this, 4, videoRecordIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val videoButtonText = if (isRecording) "녹화 중지" else "비디오"
-        
-        // 상태에 따라 다른 알림 표시
-        when (notificationState) {
-            STATE_INITIAL -> {
-                // 초기화면: 비디오 녹화 버튼만 (녹화 종료 시 자동 분석)
-                builder.setContentTitle("딥페이크 탐지")
-                    .setContentText(if (isRecording) "녹화 중..." else "화면을 녹화하세요")
-                    .setStyle(NotificationCompat.BigTextStyle()
-                        .bigText(if (isRecording) "화면 녹화가 진행 중입니다. 녹화 종료 시 자동으로 분석됩니다." else "화면을 녹화하여 딥페이크를 탐지하세요. 녹화 종료 시 자동으로 분석됩니다."))
-                    .addAction(
-                        android.R.drawable.ic_menu_camera,
-                        videoButtonText,
-                        videoRecordPendingIntent
-                    )
-            }
-            STATE_UPLOADING -> {
-                // 업로드 중: 진행 상태
-                builder.setContentTitle("영상 업로드 중...")
-                    .setContentText("업로드 진행률: $uploadProgress%")
-                    .setProgress(100, uploadProgress, false)
-                    .addAction(
-                        android.R.drawable.ic_menu_camera,
-                        videoButtonText,
-                        videoRecordPendingIntent
-                    )
-            }
-            STATE_ANALYZING -> {
-                // 분석 중
-                builder.setContentTitle("딥페이크 분석 중...")
-                    .setContentText("영상을 분석하고 있습니다")
-                    .setProgress(0, 0, true) // 무한 진행 표시
-                    .addAction(
-                        android.R.drawable.ic_menu_camera,
-                        videoButtonText,
-                        videoRecordPendingIntent
-                    )
-            }
-            STATE_COMPLETED -> {
-                // 분석 완료: 결과 표시
-                val resultText = if (analysisResult == "FAKE") {
-                    "FIKE가 딥페이크를 찾았어요!"
-                } else {
-                    "이 영상은 진짜입니다"
-                }
-                
-                val viewResultIntent = Intent(this, FloatingService::class.java).apply {
-                    action = ACTION_VIEW_RESULT
-                }
-                val viewResultPendingIntent = PendingIntent.getService(
-                    this, 3, viewResultIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                
-                val resultDetail = if (analysisResult == "FAKE") {
-                    "이 영상은 ${deepfakePercentage}% 확률로 딥페이크로 판단합니다.\n" +
-                    "음성영역 ${audioPercentage}% 확률로 위조로 판단합니다."
-                } else {
-                    "이 영상은 진짜입니다."
-                }
-                
-                builder.setContentTitle(resultText)
-                    .setContentText(resultDetail)
-                    .setStyle(NotificationCompat.BigTextStyle()
-                        .bigText(resultDetail))
-                    .setProgress(0, 0, false) // 진행 표시 제거
-                    .addAction(
-                        android.R.drawable.ic_menu_camera,
-                        videoButtonText,
-                        videoRecordPendingIntent
-                    )
-                    .addAction(
-                        android.R.drawable.ic_menu_view,
-                        "자세히 보기",
-                        viewResultPendingIntent
-                    )
-                
-                // 상태는 완료 상태로 유지 (사용자가 결과를 확인할 수 있도록)
-                // 다음 업로드를 위해서는 사용자가 "업로드" 버튼을 다시 누르면 초기 상태로 돌아감
-            }
-        }
-        
-        // 종료 버튼은 모든 상태에서 표시
-        val stopIntent = Intent(this, FloatingService::class.java).apply {
-            action = ACTION_STOP
-        }
-        val stopPendingIntent = PendingIntent.getService(
-            this, 2, stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        builder.addAction(
-            android.R.drawable.ic_menu_close_clear_cancel,
-            "종료",
-            stopPendingIntent
-        )
+            .setOngoing(true)
         
         // Android 14+ (API 34+)에서는 foregroundServiceType 설정
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -397,13 +265,7 @@ class FloatingService : Service() {
         
         return builder.build()
     }
-    
-    private fun updateNotification() {
-        val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.notify(NOTIFICATION_ID, createNotification())
-    }
 
-    // 플로팅 위젯 표시
     private fun showFloatingWidget() {
         try {
             android.util.Log.d("FloatingService", "=== showFloatingWidget() 시작 ===")
@@ -428,37 +290,60 @@ class FloatingService : Service() {
             )
         }
 
-        // Create main button with camera icon
-        val mainButton = ImageView(this).apply {
-            val size = (60 * resources.displayMetrics.density).toInt() // 초기 크기로 복원
-            layoutParams = FrameLayout.LayoutParams(size, size).apply {
+        // Create main button
+        val mainButtonSize = (70 * resources.displayMetrics.density).toInt()
+        val mainButton = object : View(this) {
+            private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            private val arcRect = RectF()
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val sizePx = width.coerceAtMost(height).toFloat()
+                val radius = sizePx / 2f
+                val centerX = width / 2f
+                val centerY = height / 2f
+
+                // 기본 흰색 원
+                paint.style = Paint.Style.FILL
+                paint.color = Color.WHITE
+                canvas.drawCircle(centerX, centerY, radius, paint)
+
+                // 금색 호 (우측-하단 90도)
+                paint.color = Color.parseColor("#FFC628")
+                arcRect.set(centerX - radius, centerY - radius, centerX + radius, centerY + radius)
+                canvas.drawArc(arcRect, 0f, 90f, true, paint)
+
+                // 검은색 원
+                paint.color = Color.BLACK
+                val blackRadiusRatio = 26.4964f / 52.0713f
+                val blackDxRatio = (50.8315f - 52.0713f) / 52.0713f
+                val blackDyRatio = (51.0069f - 52.0713f) / 52.0713f
+                canvas.drawCircle(
+                    centerX + blackDxRatio * radius,
+                    centerY + blackDyRatio * radius,
+                    radius * blackRadiusRatio,
+                    paint
+                )
+
+                // 흰색 작은 원
+                paint.color = Color.WHITE
+                val whiteRadiusRatio = 16.1283f / 52.0713f
+                val whiteDxRatio = (61.1996f - 52.0713f) / 52.0713f
+                val whiteDyRatio = (61.3751f - 52.0713f) / 52.0713f
+                canvas.drawCircle(
+                    centerX + whiteDxRatio * radius,
+                    centerY + whiteDyRatio * radius,
+                    radius * whiteRadiusRatio,
+                    paint
+                )
+            }
+        }.apply {
+            layoutParams = FrameLayout.LayoutParams(mainButtonSize, mainButtonSize).apply {
                 gravity = Gravity.CENTER
             }
-            
-            // 카메라 아이콘 로드 시도
-            try {
-                // drawable에 camera_icon.png가 있으면 사용
-                val iconResId = resources.getIdentifier("camera_icon", "drawable", packageName)
-                if (iconResId != 0) {
-                    setImageResource(iconResId)
-                    setBackgroundColor(Color.TRANSPARENT)
-                } else {
-                    // 아이콘이 없으면 임시로 배경색 사용
-                    android.util.Log.w("FloatingService", "camera_icon drawable을 찾을 수 없습니다. PNG로 변환해서 drawable에 추가하세요.")
-                    setBackgroundColor(Color.parseColor("#2563eb")) // 임시 파란색 배경
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("FloatingService", "Failed to load camera icon", e)
-                setBackgroundColor(Color.parseColor("#2563eb")) // 임시 파란색 배경
-            }
-            
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            elevation = 8f
-            // 둥근 모서리
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                clipToOutline = true
-            }
-        }
+            elevation = 10f
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        }.also { mainButtonView = it }
 
         // Create menu container
         val menuContainer = FrameLayout(this).apply {
@@ -471,31 +356,24 @@ class FloatingService : Service() {
             visibility = View.GONE
             alpha = 0f
         }
+        mainButtonView = mainButton
 
         // Create menu buttons
+        val iconSize = (54 * resources.displayMetrics.density).toInt()
+        val iconPadding = (10 * resources.displayMetrics.density).toInt()
+
         recordButton = ImageButton(this).apply {
-            try {
-                val recordIcon = ContextCompat.getDrawable(this@FloatingService, resources.getIdentifier("icon_record", "drawable", packageName))
-                if (recordIcon != null) {
-                    setImageDrawable(recordIcon)
-                } else {
-                    // 아이콘을 찾을 수 없으면 기본 아이콘 사용
-                    setImageResource(android.R.drawable.ic_media_play)
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("FloatingService", "Failed to load icon_record", e)
-                setImageResource(android.R.drawable.ic_media_play)
-            }
-            setBackgroundColor(Color.TRANSPARENT)
-            val size = (50 * resources.displayMetrics.density).toInt() // 초기 크기로 복원
+            setImageDrawable(loadIconDrawable("camera"))
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            background = createCircleBackground(Color.parseColor("#F2FFFFFF"))
+            setPadding(iconPadding, iconPadding, iconPadding, iconPadding)
+            val size = iconSize
             layoutParams = FrameLayout.LayoutParams(size, size).apply {
                 gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP
                 bottomMargin = (80 * resources.displayMetrics.density).toInt()
             }
             elevation = 6f
             tag = "record_btn"
-            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-            setPadding(8, 8, 8, 8)
             setOnClickListener {
                 if (recordActionInProgress) return@setOnClickListener
                 recordActionInProgress = true
@@ -504,10 +382,12 @@ class FloatingService : Service() {
                     // 녹화 중지
                     stopScreenRecording(false)
                 } else {
-                    // MainActivity로 이동하여 MediaProjection 권한 요청 (매번 요청)
+                    // MainActivity를 백그라운드에서 시작하여 MediaProjection 권한 요청
+                    // FLAG_ACTIVITY_NEW_TASK만 사용하고, 투명 Activity로 처리
                     val intent = Intent(this@FloatingService, MainActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
                         action = "START_RECORDING"
+                        putExtra("hideActivity", true)  // Activity를 숨기도록 표시
                     }
                     startActivity(intent)
                 }
@@ -520,23 +400,16 @@ class FloatingService : Service() {
         val recordBtn = recordButton!!
 
         val captureBtn = ImageButton(this).apply {
-            try {
-                val captureIcon = ContextCompat.getDrawable(this@FloatingService, resources.getIdentifier("icon_capture", "drawable", packageName))
-                if (captureIcon != null) {
-                    setImageDrawable(captureIcon)
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("FloatingService", "Failed to load icon_capture", e)
-            }
-            setBackgroundColor(Color.TRANSPARENT)
-            val size = (50 * resources.displayMetrics.density).toInt() // 초기 크기로 복원
+            setImageDrawable(loadIconDrawable("cap"))
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            background = createCircleBackground(Color.parseColor("#F2FFFFFF"))
+            setPadding(iconPadding, iconPadding, iconPadding, iconPadding)
+            val size = iconSize
             layoutParams = FrameLayout.LayoutParams(size, size).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.START
                 marginEnd = (80 * resources.displayMetrics.density).toInt()
             }
             elevation = 6f
-            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-            setPadding(8, 8, 8, 8)
             setOnClickListener {
                 toggleMenu()
                 // MainActivity로 이동하여 MediaProjection 권한 요청
@@ -549,23 +422,16 @@ class FloatingService : Service() {
         }
 
         val exitBtn = ImageButton(this).apply {
-            try {
-                val closeIcon = ContextCompat.getDrawable(this@FloatingService, resources.getIdentifier("icon_close", "drawable", packageName))
-                if (closeIcon != null) {
-                    setImageDrawable(closeIcon)
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("FloatingService", "Failed to load icon_close", e)
-            }
-            setBackgroundColor(Color.TRANSPARENT)
-            val size = (50 * resources.displayMetrics.density).toInt() // 초기 크기로 복원
+            setImageDrawable(loadIconDrawable("del"))
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            background = createCircleBackground(Color.parseColor("#F2FFFFFF"))
+            setPadding(iconPadding, iconPadding, iconPadding, iconPadding)
+            val size = iconSize
             layoutParams = FrameLayout.LayoutParams(size, size).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.END
                 marginStart = (80 * resources.displayMetrics.density).toInt()
             }
             elevation = 6f
-            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-            setPadding(8, 8, 8, 8)
             setOnClickListener {
                 stopSelf()
             }
@@ -578,7 +444,20 @@ class FloatingService : Service() {
 
         // Add views
         floatingView!!.addView(mainButton)
+        resultIconView = ImageView(this).apply {
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                mainButtonSize,
+                mainButtonSize
+            ).apply {
+                gravity = Gravity.CENTER
+            }
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        floatingView!!.addView(resultIconView)
+        resultIconView?.bringToFront()
         floatingView!!.addView(menuContainer)
+        resultIconView?.bringToFront()
 
         // Set click listener
         mainButton.setOnClickListener { toggleMenu() }
@@ -667,11 +546,418 @@ class FloatingService : Service() {
         })
     }
 
-    // 플로팅 위젯 메뉴 토글
+    private fun loadIconDrawable(name: String): BitmapDrawable? {
+        // 1) Try rendering SVG directly (preserves vector quality)
+        try {
+            assets.open("$name.svg").use { stream ->
+                val svg = SVG.getFromInputStream(stream)
+                val viewBox = svg.documentViewBox
+                val intrinsicWidth = if (svg.documentWidth != -1f) svg.documentWidth else viewBox?.width() ?: 120f
+                val intrinsicHeight = if (svg.documentHeight != -1f) svg.documentHeight else viewBox?.height() ?: 120f
+                
+                val bitmap = Bitmap.createBitmap(
+                    intrinsicWidth.toInt().coerceAtLeast(1),
+                    intrinsicHeight.toInt().coerceAtLeast(1),
+                    Bitmap.Config.ARGB_8888
+                )
+                val canvas = Canvas(bitmap)
+                canvas.drawColor(Color.TRANSPARENT)
+                svg.renderToCanvas(canvas)
+                return BitmapDrawable(resources, bitmap)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("FloatingService", "Failed to render SVG for $name, falling back to PNG/base64", e)
+        }
+        
+        // 2) Try PNG version (pre-decoded asset)
+        try {
+            assets.open("$name.png").use { stream ->
+                val bitmap = BitmapFactory.decodeStream(stream)
+                if (bitmap != null) {
+                    return BitmapDrawable(resources, bitmap)
+                }
+            }
+        } catch (_: Exception) {
+            // fallback to SVG
+        }
+
+        val assetName = "$name.svg"
+        return try {
+            val svgContent = assets.open(assetName).bufferedReader().use { it.readText() }
+            val match = Regex("base64,([A-Za-z0-9+/=]+)\"").find(svgContent) ?: return null
+            val bytes = Base64.decode(match.groupValues[1], Base64.DEFAULT)
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            BitmapDrawable(resources, bitmap)
+        } catch (e: Exception) {
+            android.util.Log.e("FloatingService", "Failed to load asset $assetName", e)
+            null
+        }
+    }
+
+    private fun createCircleBackground(fillColor: Int): GradientDrawable {
+        val strokeWidth = (1 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        return GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(fillColor)
+            setStroke(strokeWidth, Color.parseColor("#33000000"))
+        }
+    }
+
+    private fun ensureAnalysisOverlay(): AnalysisOverlayComponents {
+        analysisOverlay?.let { return it }
+        
+        val container = FrameLayout(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+        }
+        
+        val cardWidth = (320 * resources.displayMetrics.density).toInt()
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 48, 48, 48)
+            background = GradientDrawable().apply {
+                cornerRadius = 40f
+                setColor(Color.WHITE)
+                setStroke(
+                    (2 * resources.displayMetrics.density).toInt(),
+                    Color.parseColor("#F3F4F6")
+                )
+            }
+            layoutParams = FrameLayout.LayoutParams(
+                cardWidth,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+            minimumWidth = cardWidth
+        }
+        
+        val loadingContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val size = (60 * resources.displayMetrics.density).toInt()
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                size
+            ).apply {
+                bottomMargin = (24 * resources.displayMetrics.density).toInt()
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+            gravity = Gravity.CENTER
+        }
+        
+        val loadingImages = loadingFrameNames.mapIndexed { index, _ ->
+            ImageView(this).apply {
+                val size = if (index == 0 || index == loadingFrameNames.lastIndex) {
+                    (54 * resources.displayMetrics.density).toInt()
+                } else {
+                    (74 * resources.displayMetrics.density).toInt()
+                }
+                layoutParams = LinearLayout.LayoutParams(size, size)
+                visibility = if (index == 0) View.VISIBLE else View.INVISIBLE
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }.also { loadingContainer.addView(it) }
+        }
+        
+        val statusText = TextView(this).apply {
+            text = "위젯 분석 중"
+            setTextColor(Color.parseColor("#111827"))
+            textSize = 18f
+        }
+        
+        val percentageText = TextView(this).apply {
+            text = "0%"
+            setTextColor(Color.parseColor("#111827"))
+            textSize = 48f
+            setPadding(0, 24, 0, 12)
+            visibility = View.GONE
+        }
+        
+        val detailText = TextView(this).apply {
+            text = "영상 업로드 및 분석을 수행하고 있습니다..."
+            setTextColor(Color.parseColor("#4B5563"))
+            textSize = 16f
+        }
+        
+        val progressBar = ProgressBar(this).apply {
+            isIndeterminate = true
+            visibility = View.VISIBLE
+        }
+        
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 32, 0, 0)
+            gravity = Gravity.CENTER
+            setBaselineAligned(false)
+        }
+        
+        fun createButtonBackground(): GradientDrawable = GradientDrawable().apply {
+            cornerRadius = 24f
+            setColor(Color.parseColor("#FFC628"))
+        }
+        
+        val buttonSpacing = (12 * resources.displayMetrics.density).toInt()
+        
+        val openAppButton = Button(this).apply {
+            text = "앱에서 보기"
+            visibility = View.GONE
+            setTextColor(Color.BLACK)
+            background = createButtonBackground()
+            setPadding(40, 12, 40, 12)
+        }
+        
+        val closeButton = Button(this).apply {
+            text = "닫기"
+            setTextColor(Color.BLACK)
+            background = createButtonBackground()
+            setPadding(40, 12, 40, 12)
+            setOnClickListener { hideAnalysisOverlay() }
+        }
+        
+        val openParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            marginEnd = buttonSpacing
+        }
+        buttonRow.addView(openAppButton, openParams)
+        buttonRow.addView(closeButton)
+        
+        card.addView(loadingContainer)
+        card.addView(statusText)
+        card.addView(percentageText)
+        card.addView(detailText)
+        card.addView(progressBar)
+        card.addView(buttonRow)
+        
+        container.addView(card)
+        
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                WindowManager.LayoutParams.TYPE_PHONE
+            },
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+        
+        windowManager?.addView(container, params)
+        analysisOverlayParams = params
+        val components = AnalysisOverlayComponents(
+            container,
+            loadingImages,
+            statusText,
+            percentageText,
+            detailText,
+            progressBar,
+            closeButton,
+            openAppButton
+        )
+        analysisOverlay = components
+        openAppButton.setOnClickListener {
+            openResultInApp()
+        }
+        return components
+    }
+
+    private fun showAnalysisOverlayLoading(autoStop: Boolean) {
+        val overlay = ensureAnalysisOverlay()
+        overlay.container.visibility = View.VISIBLE
+        overlay.statusText.text = "위젯 분석 중"
+        overlay.detailText.text = if (autoStop) {
+            "자동 종료된 영상을 업로드하고 있습니다..."
+        } else {
+            "영상 업로드 및 분석을 수행하고 있습니다..."
+        }
+        overlay.loadingImages.forEachIndexed { index, imageView ->
+            if (index == 0) {
+                imageView.visibility = View.VISIBLE
+                imageView.setImageDrawable(loadIconDrawable(loadingFrameNames[0]))
+            } else {
+                imageView.visibility = View.INVISIBLE
+            }
+        }
+        overlay.progressBar.visibility = View.GONE
+        overlay.percentageText.visibility = View.GONE
+        overlay.openAppButton.visibility = View.GONE
+        startLoadingAnimation()
+    }
+
+    private fun showAnalysisOverlayResult(percentage: Int, videoId: String?) {
+        val overlay = ensureAnalysisOverlay()
+        overlay.progressBar.visibility = View.GONE
+        overlay.loadingImages.forEach { it.visibility = View.GONE }
+        stopLoadingAnimation()
+        overlay.percentageText.visibility = View.VISIBLE
+        overlay.percentageText.text = "$percentage%"
+        overlay.statusText.text = "분석 완료"
+        overlay.detailText.text = if (percentage >= 50) {
+            "위험 확률이 높습니다."
+        } else {
+            "위험 확률이 낮습니다."
+        }
+        overlay.openAppButton.visibility = View.VISIBLE
+        lastAnalysisVideoId = videoId
+        showResultIcon()
+    }
+
+    private fun showAnalysisOverlayError(message: String) {
+        val overlay = ensureAnalysisOverlay()
+        overlay.progressBar.visibility = View.GONE
+        overlay.loadingImages.forEach { it.visibility = View.GONE }
+        stopLoadingAnimation()
+        overlay.percentageText.visibility = View.GONE
+        overlay.statusText.text = "분석 실패"
+        overlay.detailText.text = message
+        overlay.openAppButton.visibility = View.VISIBLE
+        hideResultIcon()
+    }
+
+    private fun hideAnalysisOverlay() {
+        analysisOverlay?.let {
+            try {
+                windowManager?.removeView(it.container)
+            } catch (_: Exception) {
+            }
+        }
+        stopLoadingAnimation()
+        analysisOverlay = null
+        analysisOverlayParams = null
+        hideResultIcon()
+    }
+
+    private fun openResultInApp() {
+        val path = lastAnalysisFilePath ?: return
+        hideAnalysisOverlay()
+        sendRecordingCompleteEvent(path, false)
+    }
+
+    private fun showResultIcon() {
+        mainHandler.post {
+            val drawable = loadIconDrawable("we2")
+            resultIconView?.apply {
+                setImageDrawable(drawable)
+                visibility = View.VISIBLE
+            }
+            mainButtonView?.visibility = View.INVISIBLE
+        }
+    }
+
+    private fun hideResultIcon() {
+        mainHandler.post {
+            resultIconView?.visibility = View.GONE
+            mainButtonView?.visibility = View.VISIBLE
+        }
+    }
+
+    private fun startLoadingAnimation() {
+        if (loadingAnimationRunning) return
+        loadingAnimationRunning = true
+        loadingFrameIndex = 0
+        mainHandler.post(loadingAnimationRunnable)
+    }
+
+    private fun stopLoadingAnimation() {
+        if (!loadingAnimationRunning) return
+        loadingAnimationRunning = false
+        mainHandler.removeCallbacks(loadingAnimationRunnable)
+    }
+
+    private fun startWidgetAnalysis(file: File, autoStop: Boolean) {
+        if (widgetAnalysisInProgress) {
+            android.util.Log.w("FloatingService", "Widget analysis already running, skipping new request")
+            return
+        }
+        widgetAnalysisInProgress = true
+        lastAnalysisFilePath = file.absolutePath
+        mainHandler.post { showAnalysisOverlayLoading(autoStop) }
+        analysisExecutor.execute {
+            try {
+                val result = performWidgetAnalysisRequest(file)
+                mainHandler.post {
+                    widgetAnalysisInProgress = false
+                    showAnalysisOverlayResult(result.percentage, result.videoId)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("FloatingService", "Native widget analysis failed", e)
+                mainHandler.post {
+                    widgetAnalysisInProgress = false
+                    showAnalysisOverlayError(e.message ?: "분석 중 오류가 발생했습니다.")
+                }
+            }
+        }
+    }
+
+    private fun performWidgetAnalysisRequest(file: File): NativeAnalysisResult {
+        val mediaType = "video/mp4".toMediaType()
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("user_id", "widget_user")
+            .addFormDataPart("video", file.name, file.asRequestBody(mediaType))
+            .build()
+        val url = "$backendBaseUrl/analyze-video/"
+        android.util.Log.d("FloatingService", "Uploading widget recording to $url (${file.length()} bytes)")
+        val request = Request.Builder()
+            .url(url)
+            .post(body)
+            .build()
+        analysisClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("분석 서버 응답 오류: ${response.code}")
+            }
+            val jsonText = response.body?.string() ?: throw IOException("서버 응답이 비어있습니다")
+            val json = JSONObject(jsonText)
+            val percentage = calculateDeepfakePercentage(json)
+            val videoId = json.optString("videoId", null)
+            android.util.Log.d("FloatingService", "Native analysis success: $percentage%, videoId=$videoId")
+            return NativeAnalysisResult(percentage, videoId, json)
+        }
+    }
+
+    private fun calculateDeepfakePercentage(json: JSONObject): Int {
+        json.optJSONObject("video_analysis")?.optDouble("overall_confidence")?.takeIf { !it.isNaN() }?.let {
+            return (it * 100).roundToInt()
+        }
+        val summary = json.optJSONObject("summary")
+        if (summary != null && summary.optString("overall_result", "").equals("FAKE", ignoreCase = true)) {
+            val conf = summary.optDouble("overall_confidence")
+            if (!conf.isNaN()) {
+                return (conf * 100).roundToInt()
+            }
+        }
+        val timeline = json.optJSONArray("timeline")
+        if (timeline != null && timeline.length() > 0) {
+            var total = 0.0
+            var count = 0
+            for (i in 0 until timeline.length()) {
+                val segment = timeline.optJSONObject(i) ?: continue
+                val result = segment.optString("result", segment.optString("ensemble_result", ""))
+                if (result.equals("FAKE", ignoreCase = true)) {
+                    val details = segment.optJSONObject("details")
+                    val video = details?.optJSONObject("video")
+                    val conf = video?.optDouble("fake_confidence")
+                    if (conf != null && !conf.isNaN()) {
+                        total += conf
+                        count++
+                        continue
+                    }
+                    val altConf = segment.optDouble("confidence")
+                    if (!altConf.isNaN()) {
+                        total += altConf
+                        count++
+                    }
+                }
+            }
+            if (count > 0) {
+                return (total / count * 100).roundToInt()
+            }
+        }
+        return 0
+    }
+
     private fun toggleMenu() {
         val menuContainer = floatingView?.findViewWithTag<FrameLayout>("menu_container") ?: return
-        val mainButton = floatingView?.getChildAt(0) ?: return
-        
         isExpanded = !isExpanded
         
         if (isExpanded) {
@@ -690,51 +976,22 @@ class FloatingService : Service() {
                 .start()
         }
     }
-    
-    // 녹화 버튼 아이콘 업데이트
-    private fun updateRecordButton(recording: Boolean) {
-        recordButton?.let { button ->
-            try {
-                val iconResId: Int = if (recording) {
-                    // 녹화 중일 때는 종료 아이콘 표시
-                    resources.getIdentifier("icon_close", "drawable", packageName)
-                } else {
-                    // 녹화 중이 아닐 때는 녹화 아이콘 표시
-                    resources.getIdentifier("icon_record", "drawable", packageName)
-                }
-                
-                if (iconResId != 0) {
-                    val icon = ContextCompat.getDrawable(this, iconResId)
-                    if (icon != null) {
-                        button.setImageDrawable(icon)
-                    } else {
-                        // icon이 null인 경우 아무것도 하지 않음
-                    }
-                } else {
-                    // iconResId가 0인 경우 아무것도 하지 않음
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("FloatingService", "Failed to update record button icon", e)
-            }
-        }
-    }
 
-    // 플로팅 위젯 제거
     private fun stopFloatingWidget() {
         floatingView?.let {
-            try {
-                windowManager?.removeView(it)
-            } catch (e: Exception) {
-                android.util.Log.e("FloatingService", "Error removing floating view", e)
-            }
+            windowManager?.removeView(it)
             floatingView = null
         }
-        recordButton = null
+        recordButton = null  // 버튼 참조도 초기화
+        mainButtonView = null
+        resultIconView = null
     }
 
     override fun onDestroy() {
         super.onDestroy()
         stopFloatingWidget()
+        hideAnalysisOverlay()
+        analysisExecutor.shutdownNow()
     }
 
     private fun startScreenRecording(intent: Intent?) {
@@ -812,14 +1069,17 @@ class FloatingService : Service() {
                         setOutputFile(recordingFile!!.absolutePath)
                         setVideoEncoder(MediaRecorder.VideoEncoder.H264)
                         
-                        // 해상도와 비트레이트를 에뮬레이터에 맞게 조정
-                        val width = minOf(screenWidth, 1280)
-                        val height = minOf(screenHeight, 720)
+                        // 해상도와 비트레이트를 높여서 분석 정확도 향상
+                        // 원본 해상도 유지 (최대 1920x1080)
+                        val width = minOf(screenWidth, 1920)
+                        val height = minOf(screenHeight, 1080)
                         setVideoSize(width, height)
-                        setVideoEncodingBitRate(2 * 1000 * 1000) // 2Mbps로 낮춤
-                        setVideoFrameRate(24) // 24fps로 낮춤
+                        // 비트레이트를 높여서 품질 향상 (8Mbps)
+                        setVideoEncodingBitRate(8 * 1000 * 1000) // 8Mbps
+                        // 프레임레이트를 높여서 더 많은 프레임 확보 (30fps)
+                        setVideoFrameRate(30) // 30fps
                         
-                        android.util.Log.d("FloatingService", "MediaRecorder configured: ${width}x${height}, bitrate=2Mbps, fps=24")
+                        android.util.Log.d("FloatingService", "MediaRecorder configured: ${width}x${height}, bitrate=8Mbps, fps=30")
                         
                         try {
                             prepare()
@@ -863,8 +1123,12 @@ class FloatingService : Service() {
                 android.util.Log.d("FloatingService", "MediaRecorder started: ${mediaRecorder != null}")
                 android.util.Log.d("FloatingService", "isRecording set to: $isRecording")
                 
-                // 플로팅 위젯 버튼 업데이트
-                updateRecordButton(true)
+                // 메인 스레드에서 버튼 업데이트 (UI 업데이트는 메인 스레드에서만 가능)
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.util.Log.d("FloatingService", "Updating record button to recording state (메인 스레드)")
+                    updateRecordButton(true)
+                    android.util.Log.d("FloatingService", "Record button updated")
+                }
                 
                 // 녹화 시작 확인을 위한 Toast 메시지 (선택사항)
                 try {
@@ -941,8 +1205,11 @@ class FloatingService : Service() {
             
             isRecording = false
             
-            // 플로팅 위젯 버튼 업데이트
-            updateRecordButton(false)
+            // 메인 스레드에서 버튼 업데이트
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.util.Log.d("FloatingService", "Updating record button to stopped state (메인 스레드)")
+                updateRecordButton(false)
+            }
             
             // 녹화 완료 이벤트 전송
             recordingFile?.let { file ->
@@ -953,21 +1220,15 @@ class FloatingService : Service() {
                 android.util.Log.d("FloatingService", "autoStop: $autoStop")
                 
                 if (file.exists() && file.length() > 0) {
-                    // 자동 종료가 아닐 때만 추가 알림 표시 (자동 종료는 이미 Toast 표시함)
                     if (!autoStop) {
                         try {
                             android.widget.Toast.makeText(this@FloatingService, "녹화가 완료되었습니다", android.widget.Toast.LENGTH_SHORT).show()
                         } catch (e: Exception) {
-                            // Toast 실패는 무시
+                            // ignore
                         }
                     }
-                    android.util.Log.d("FloatingService", "이벤트 전송 시작: ${file.absolutePath}")
-                    sendRecordingCompleteEvent(file.absolutePath, autoStop)
-                    android.util.Log.d("FloatingService", "이벤트 전송 완료")
-                    
-                    // 녹화 종료 시 항상 자동 분석 시작
-                    android.util.Log.d("FloatingService", "녹화 종료 - 자동 분석 시작: ${file.absolutePath}")
-                    startAutoAnalysis(file.absolutePath)
+                    android.util.Log.d("FloatingService", "위젯 네이티브 분석 시작: ${file.absolutePath}")
+                    startWidgetAnalysis(file, autoStop)
                 } else {
                     android.util.Log.e("FloatingService", "녹화 파일이 존재하지 않거나 비어있음")
                     file.delete()
@@ -1072,6 +1333,40 @@ class FloatingService : Service() {
         }
     }
     
+    private fun updateRecordButton(recording: Boolean) {
+        android.util.Log.d("FloatingService", "updateRecordButton called: recording=$recording")
+        android.util.Log.d("FloatingService", "floatingView is null: ${floatingView == null}")
+        android.util.Log.d("FloatingService", "recordButton stored reference is null: ${recordButton == null}")
+        
+        // 저장된 참조를 먼저 시도
+        val recordBtn = recordButton ?: floatingView?.findViewWithTag<ImageButton>("record_btn")
+        android.util.Log.d("FloatingService", "recordBtn found: ${recordBtn != null}")
+        
+        if (recordBtn != null) {
+            val newDescription = if (recording) "녹화 중지" else "녹화"
+            val fillColor = if (recording) Color.parseColor("#FFE04C32") else Color.parseColor("#F2FFFFFF")
+            
+            android.util.Log.d("FloatingService", "Updating button: description='$newDescription'")
+            
+            // 메인 스레드에서 실행 확인 (이미 메인 스레드에서 호출되지만 안전을 위해)
+            recordBtn.post {
+                recordBtn.contentDescription = newDescription
+                recordBtn.background = createCircleBackground(fillColor)
+                android.util.Log.d("FloatingService", "Button updated successfully: contentDescription='${recordBtn.contentDescription}'")
+            }
+        } else {
+            android.util.Log.e("FloatingService", "recordBtn not found! floatingView=$floatingView, recordButton=$recordButton")
+            // 버튼을 다시 찾아서 저장 시도
+            floatingView?.let { view ->
+                val foundBtn = view.findViewWithTag<ImageButton>("record_btn")
+                if (foundBtn != null) {
+                    android.util.Log.d("FloatingService", "Found button on retry, storing reference")
+                    recordButton = foundBtn
+                    updateRecordButton(recording)  // 재귀 호출로 다시 시도
+                }
+            }
+        }
+    }
     
     private fun sendRecordingCompleteEvent(filePath: String, autoStop: Boolean = false) {
         try {
@@ -1118,6 +1413,23 @@ class FloatingService : Service() {
                 }
             }
             
+            // 앱을 포그라운드로 가져오기 (Alert를 보이기 위해)
+            // 이벤트를 먼저 전송한 후 앱을 포그라운드로 가져옴
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    val intent = Intent(this, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        putExtra("showRecordingComplete", true)
+                        putExtra("filePath", filePath)
+                        putExtra("autoStop", autoStop)
+                    }
+                    startActivity(intent)
+                    android.util.Log.d("FloatingService", "MainActivity brought to foreground (after event sent)")
+                } catch (e: Exception) {
+                    android.util.Log.e("FloatingService", "Failed to bring MainActivity to foreground", e)
+                    e.printStackTrace()
+                }
+            }, 500) // 이벤트 전송 후 500ms 대기
         } catch (e: Exception) {
             android.util.Log.e("FloatingService", "Error in sendRecordingCompleteEvent", e)
             e.printStackTrace()
@@ -1139,163 +1451,6 @@ class FloatingService : Service() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-    }
-    
-    private fun sendAnalyzingEvent() {
-        try {
-            val app = applicationContext as? ReactApplication
-            val reactContext = app?.reactNativeHost?.reactInstanceManager?.currentReactContext as? com.facebook.react.bridge.ReactApplicationContext
-            reactContext?.let {
-                android.util.Log.d("FloatingService", "분석 시작 이벤트 전송")
-                it.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                    .emit("onAnalyzing", Arguments.createMap())
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("FloatingService", "Error in sendAnalyzingEvent", e)
-            e.printStackTrace()
-        }
-    }
-    
-    private fun sendAnalysisResultEvent(result: String, deepfakePercentage: Int, audioPercentage: Int, videoId: String?) {
-        try {
-            val app = applicationContext as? ReactApplication
-            val reactContext = app?.reactNativeHost?.reactInstanceManager?.currentReactContext as? com.facebook.react.bridge.ReactApplicationContext
-            reactContext?.let {
-                val params = Arguments.createMap().apply {
-                    putString("result", result)
-                    putInt("deepfakePercentage", deepfakePercentage)
-                    putInt("audioPercentage", audioPercentage)
-                    putString("videoId", videoId)
-                }
-                android.util.Log.d("FloatingService", "분석 완료 이벤트 전송: result=$result, percentage=$deepfakePercentage%")
-                it.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                    .emit("onAnalysisResult", params)
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("FloatingService", "Error in sendAnalysisResultEvent", e)
-            e.printStackTrace()
-        }
-    }
-    
-    private fun startAutoAnalysis(videoFilePath: String) {
-        android.util.Log.d("FloatingService", "=== 자동 분석 시작 ===")
-        android.util.Log.d("FloatingService", "비디오 파일: $videoFilePath")
-        
-        // 백그라운드 스레드에서 분석 시작
-        Thread {
-            try {
-                // 알림 상태를 "분석 중"으로 변경
-                notificationState = STATE_ANALYZING
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    updateNotification()
-                    // React Native로 분석 시작 이벤트 전송
-                    sendAnalyzingEvent()
-                }
-                
-                // API URL (개발 환경 기본값, 필요시 SharedPreferences에서 가져오기)
-                val apiBaseUrl = "http://10.56.56.21:8000" // TODO: 설정에서 가져오기
-                val apiUrl = "$apiBaseUrl/analyze-video/"
-                
-                android.util.Log.d("FloatingService", "API URL: $apiUrl")
-                
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                    .writeTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
-                
-                val videoFile = File(videoFilePath)
-                val requestBody = MultipartBody.Builder()
-                    .setType(MultipartBody.FORM)
-                    .addFormDataPart("user_id", "user123")
-                    .addFormDataPart(
-                        "video",
-                        videoFile.name,
-                        videoFile.asRequestBody("video/mp4".toMediaType())
-                    )
-                    .build()
-                
-                val request = Request.Builder()
-                    .url(apiUrl)
-                    .post(requestBody)
-                    .build()
-                
-                android.util.Log.d("FloatingService", "HTTP 요청 전송 중...")
-                val response = client.newCall(request).execute()
-                
-                if (response.isSuccessful) {
-                    val responseBody = response.body?.string()
-                    android.util.Log.d("FloatingService", "분석 완료: ${responseBody?.substring(0, minOf(200, responseBody?.length ?: 0))}")
-                    
-                    // JSON 파싱하여 결과 추출
-                    val jsonResponse = org.json.JSONObject(responseBody ?: "{}")
-                    val summary = jsonResponse.optJSONObject("summary")
-                    val videoAnalysis = jsonResponse.optJSONObject("video_analysis")
-                    val audioAnalysis = jsonResponse.optJSONObject("audio_analysis")
-                    
-                    val result = summary?.optString("overall_result") 
-                        ?: videoAnalysis?.optString("overall_result") 
-                        ?: "REAL"
-                    
-                    val deepfakePercentage = ((summary?.optDouble("overall_confidence") 
-                        ?: videoAnalysis?.optDouble("overall_confidence") 
-                        ?: 0.0) * 100).toInt()
-                    
-                    val audioPercentage = ((audioAnalysis?.optDouble("fake_confidence") 
-                        ?: 0.0) * 100).toInt()
-                    
-                    val videoId = jsonResponse.optString("videoId", "")
-                    
-                    // 메인 스레드에서 알림 업데이트
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        notificationState = STATE_COMPLETED
-                        analysisResult = result
-                        this.deepfakePercentage = deepfakePercentage
-                        this.audioPercentage = audioPercentage
-                        this.videoId = videoId
-                        updateNotification()
-                        // React Native로 분석 완료 이벤트 전송
-                        sendAnalysisResultEvent(result, deepfakePercentage, audioPercentage, videoId)
-                    }
-                    
-                    android.util.Log.d("FloatingService", "분석 결과: $result, 딥페이크 확률: $deepfakePercentage%, 오디오 확률: $audioPercentage%")
-                } else {
-                    android.util.Log.e("FloatingService", "분석 실패: ${response.code} - ${response.message}")
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        notificationState = STATE_INITIAL
-                        updateNotification()
-                        
-                        try {
-                            android.widget.Toast.makeText(
-                                this@FloatingService,
-                                "분석 실패: ${response.code}",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        } catch (e: Exception) {
-                            // Toast 실패는 무시
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("FloatingService", "자동 분석 오류", e)
-                e.printStackTrace()
-                
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        notificationState = STATE_INITIAL
-                        updateNotification()
-                        
-                        try {
-                            android.widget.Toast.makeText(
-                                this@FloatingService,
-                                "분석 오류: ${e.message}",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        } catch (toastEx: Exception) {
-                            // Toast 실패는 무시
-                        }
-                    }
-            }
-        }.start()
     }
 
 }

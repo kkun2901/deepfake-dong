@@ -134,3 +134,6 @@ npm start
 - Node 모듈 오류: `cd frontend && rm -rf node_modules && npm install`
 - Python 가상환경 오류: `cd backend && rm -rf venv && python -m venv venv`
 
+
+
+

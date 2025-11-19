@@ -18,6 +18,7 @@ import type { RootStackParamList } from "../navigation/AppNavigator";
 import { uploadVideoAsync } from "../api/uploadToFirebase";
 import { analyzeVideo, downloadDataset } from "../api";
 import { Linking } from "react-native";
+import * as FileSystem from "expo-file-system";
 
 type Nav = StackNavigationProp<RootStackParamList, "Record">;
 type RecordRouteProp = RouteProp<RootStackParamList, "Record">;
@@ -73,27 +74,21 @@ export default function RecordScreen() {
       console.log("[RecordScreen] 변환된 URI:", videoUri);
       
       // 파일 존재 여부 확인 (선택사항)
-      import('expo-file-system').then(({ default: FileSystem }) => {
-        FileSystem.getInfoAsync(videoUri).then((fileInfo) => {
-          console.log("[RecordScreen] 파일 정보:", fileInfo);
-          if (fileInfo.exists) {
-            console.log("[RecordScreen] 파일 크기:", fileInfo.size, "bytes");
-            console.log("[RecordScreen] 분석 시작...");
-      handleAnalyze(videoUri, showAnalysisProgress);
-          } else {
-            console.error("[RecordScreen] 파일이 존재하지 않음:", videoUri);
-            Alert.alert("오류", "녹화된 파일을 찾을 수 없습니다.");
-            analyzedPathRef.current = null;
-          }
-        }).catch((error) => {
-          console.error("[RecordScreen] 파일 정보 확인 실패:", error);
-          // 파일 정보 확인 실패해도 분석 시도 (일부 경우에는 작동할 수 있음)
-          console.log("[RecordScreen] 파일 정보 확인 실패했지만 분석 시도...");
+      FileSystem.getInfoAsync(videoUri).then((fileInfo) => {
+        console.log("[RecordScreen] 파일 정보:", fileInfo);
+        if (fileInfo.exists) {
+          console.log("[RecordScreen] 파일 크기:", fileInfo.size, "bytes");
+          console.log("[RecordScreen] 분석 시작...");
           handleAnalyze(videoUri, showAnalysisProgress);
-        });
+        } else {
+          console.error("[RecordScreen] 파일이 존재하지 않음:", videoUri);
+          Alert.alert("오류", "녹화된 파일을 찾을 수 없습니다.");
+          analyzedPathRef.current = null;
+        }
       }).catch((error) => {
-        console.error("[RecordScreen] expo-file-system import 실패:", error);
-        // expo-file-system이 없어도 분석 시도
+        console.error("[RecordScreen] 파일 정보 확인 실패:", error);
+        // 파일 정보 확인 실패해도 분석 시도 (일부 경우에는 작동할 수 있음)
+        console.log("[RecordScreen] 파일 정보 확인 실패했지만 분석 시도...");
         handleAnalyze(videoUri, showAnalysisProgress);
       });
     }
@@ -458,56 +453,6 @@ export default function RecordScreen() {
                   >
                     <View style={styles.modalButtonCloseBackground}>
                       <Text style={styles.modalButtonCloseText}>닫기</Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.modalButtonDownload}
-                    onPress={async () => {
-                      try {
-                        if (!analysisResult?.videoId) {
-                          Alert.alert("오류", "비디오 ID를 찾을 수 없습니다.");
-                          return;
-                        }
-                        
-                        setBusy(true);
-                        
-                        // JSONL, CSV, Metadata 파일 모두 다운로드
-                        const fileTypes: Array<{type: 'jsonl' | 'csv' | 'metadata', name: string}> = [
-                          { type: 'jsonl', name: '데이터셋 JSONL' },
-                          { type: 'csv', name: '타임라인 CSV' },
-                          { type: 'metadata', name: '메타데이터 JSON' }
-                        ];
-                        
-                        for (const file of fileTypes) {
-                          try {
-                            const downloadUrl = await downloadDataset(analysisResult.videoId, file.type);
-                            const supported = await Linking.canOpenURL(downloadUrl);
-                            if (supported) {
-                              await Linking.openURL(downloadUrl);
-                              // 각 파일 사이에 약간의 딜레이
-                              await new Promise(resolve => setTimeout(resolve, 500));
-                            }
-                          } catch (error: any) {
-                            console.error(`${file.name} 다운로드 오류:`, error);
-                          }
-                        }
-                        
-                        Alert.alert("다운로드 시작", "데이터셋 파일 다운로드가 시작되었습니다.\n(JSONL, CSV, JSON)");
-                        
-                        setAnalysisResult(null);
-                        setBusy(false);
-                        analyzedPathRef.current = null;
-                      } catch (error: any) {
-                        console.error("데이터셋 다운로드 오류:", error);
-                        Alert.alert("오류", `데이터셋 다운로드 실패: ${error?.message || "알 수 없는 오류"}`);
-                        setBusy(false);
-                      }
-                    }}
-                    activeOpacity={0.8}
-                    disabled={busy}
-                  >
-                    <View style={styles.modalButtonDownloadBackground}>
-                      <Text style={styles.modalButtonDownloadText}>데이터셋 다운로드</Text>
                     </View>
                   </TouchableOpacity>
                 </View>
@@ -878,25 +823,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   modalButtonCloseText: {
-    color: "#000000",
-    fontSize: 24,
-    fontWeight: "800",
-    letterSpacing: 2,
-  },
-  modalButtonDownload: {
-    flex: 1,
-    height: 70,
-  },
-  modalButtonDownloadBackground: {
-    width: "100%",
-    height: 70,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 18,
-    backgroundColor: "#2563eb", // 파란색 배경
-    borderRadius: 10,
-  },
-  modalButtonDownloadText: {
     color: "#000000",
     fontSize: 24,
     fontWeight: "800",

@@ -166,9 +166,13 @@ class FloatingWidgetModule(reactContext: ReactApplicationContext) : ReactContext
                 return
             }
 
-            val mediaProjectionManager = reactApplicationContext.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            val captureIntent = mediaProjectionManager.createScreenCaptureIntent()
-            currentActivity.startActivityForResult(captureIntent, REQUEST_MEDIA_PROJECTION)
+            // MainActivity에서 ActivityResultLauncher를 사용하므로
+            // MainActivity의 handleIntent를 통해 처리하도록 Intent 전달
+            val intent = Intent(reactApplicationContext, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                action = "START_RECORDING"
+            }
+            currentActivity.startActivity(intent)
             
             // Activity result를 저장할 임시 저장소
             pendingRecordingPromise = promise
@@ -228,9 +232,13 @@ class FloatingWidgetModule(reactContext: ReactApplicationContext) : ReactContext
                 return
             }
 
-            val mediaProjectionManager = reactApplicationContext.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            val captureIntent = mediaProjectionManager.createScreenCaptureIntent()
-            currentActivity.startActivityForResult(captureIntent, REQUEST_MEDIA_PROJECTION_CAPTURE)
+            // MainActivity에서 ActivityResultLauncher를 사용하므로
+            // MainActivity의 handleIntent를 통해 처리하도록 Intent 전달
+            val intent = Intent(reactApplicationContext, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                action = "CAPTURE_FRAME"
+            }
+            currentActivity.startActivity(intent)
             
             pendingCapturePromise = promise
         } catch (e: Exception) {

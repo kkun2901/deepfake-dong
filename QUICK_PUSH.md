@@ -28,3 +28,6 @@ git commit -m "feat: 플로팅 위젯 UI 개선 및 Cursor 개발 가이드 추�
 git push origin main
 ```
 
+
+
+

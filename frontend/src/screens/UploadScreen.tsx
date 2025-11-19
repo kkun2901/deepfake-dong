@@ -1,23 +1,41 @@
-import React, { useState } from 'react';
-import { View, Text, Button, Alert, StyleSheet, ActivityIndicator, Modal, TouchableOpacity, ImageBackground } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Alert, StyleSheet, Modal, TouchableOpacity } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { useNavigation } from '@react-navigation/native';
-import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../navigation/AppNavigator';
-import { analyzeVideo, downloadDataset } from '../api';
-import { Linking } from 'react-native';
-import { FloatingWidget } from '../utils';
+import { SvgXml } from 'react-native-svg';
+import { analyzeVideo } from '../api';
 
-type Nav = StackNavigationProp<RootStackParamList, 'Upload'>;
+const LOADING_SVGS = [
+  `<svg width="54" height="54" viewBox="0 0 54 54" fill="none" xmlns="http://www.w3.org/2000/svg"><g opacity="0.2"><circle cx="26.9671" cy="26.9671" r="26.9671" fill="black"/><path d="M53.9341 26.9671C53.9341 30.5085 53.2366 34.0152 51.8814 37.287C50.5261 40.5588 48.5398 43.5316 46.0356 46.0357C43.5315 48.5398 40.5587 50.5262 37.2869 51.8814C34.0151 53.2366 30.5084 53.9342 26.9671 53.9342L26.9671 26.9671L53.9341 26.9671Z" fill="#FFC628"/><circle cx="26.3251" cy="26.4159" r="13.7222" fill="white"/><circle cx="31.6947" cy="31.7854" r="8.35263" fill="black"/></g></svg>`,
+  `<svg width="74" height="74" viewBox="0 0 74 74" fill="none" xmlns="http://www.w3.org/2000/svg"><g opacity="0.4"><circle cx="36.8377" cy="36.8377" r="26.9671" transform="rotate(-30 36.8377 36.8377)" fill="black"/><path d="M60.1918 23.3542C61.9625 26.4211 63.1118 29.8068 63.574 33.3178C64.0363 36.8289 63.8024 40.3966 62.8859 43.8173C61.9693 47.238 60.3879 50.4447 58.2321 53.2542C56.0762 56.0638 53.3881 58.4212 50.3212 60.1919L36.8377 36.8377L60.1918 23.3542Z" fill="#FFC628"/><circle cx="36.0062" cy="36.6813" r="13.7222" transform="rotate(-30 36.0062 36.6813)" fill="white"/><circle cx="43.3411" cy="38.6467" r="8.35263" transform="rotate(-30 43.3411 38.6467)" fill="black"/></g></svg>`,
+  `<svg width="74" height="74" viewBox="0 0 74 74" fill="none" xmlns="http://www.w3.org/2000/svg"><g opacity="0.6"><circle cx="36.8377" cy="36.8377" r="26.9671" transform="rotate(-60 36.8377 36.8377)" fill="black"/><path d="M50.3212 13.4835C53.3881 15.2542 56.0762 17.6116 58.2321 20.4212C60.3879 23.2307 61.9693 26.4374 62.8859 29.8581C63.8024 33.2788 64.0363 36.8465 63.574 40.3576C63.1118 43.8687 61.9625 47.2543 60.1918 50.3212L36.8377 36.8377L50.3212 13.4835Z" fill="#FFC628"/><circle cx="36.0394" cy="37.118" r="13.7222" transform="rotate(-60 36.0394 37.118)" fill="white"/><circle cx="43.3743" cy="35.1526" r="8.35263" transform="rotate(-60 43.3743 35.1526)" fill="black"/></g></svg>`,
+  `<svg width="54" height="54" viewBox="0 0 54 54" fill="none" xmlns="http://www.w3.org/2000/svg"><g opacity="0.9"><circle cx="26.9671" cy="26.9671" r="26.9671" transform="matrix(0 -1 1 0 0 53.9341)" fill="black"/><path d="M26.9671 0C30.5084 0 34.0151 0.697525 37.2869 2.05275C40.5587 3.40797 43.5315 5.39434 46.0356 7.89847C48.5398 10.4026 50.5261 13.3754 51.8814 16.6472C53.2366 19.919 53.9341 23.4257 53.9341 26.9671L26.9671 26.9671L26.9671 0Z" fill="#FFC628"/><circle cx="26.4159" cy="27.609" r="13.7222" transform="rotate(-90 26.4159 27.609)" fill="white"/><circle cx="31.7854" cy="22.2394" r="8.35263" transform="rotate(-90 31.7854 22.2394)" fill="black"/></g></svg>`
+];
+
+const LOADING_SIZES = [54, 74, 74, 54];
 
 export default function UploadScreen() {
-  const navigation = useNavigation<Nav>();
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<{ percentage: number; timeline: any; videoId?: string } | null>(null);
+  const [confirmVisible, setConfirmVisible] = useState(false);
+  const [overlayVisible, setOverlayVisible] = useState(false);
+  const [overlayMode, setOverlayMode] = useState<'loading' | 'result'>('loading');
+  const [overlayPercentage, setOverlayPercentage] = useState(0);
+  const [overlayResult, setOverlayResult] = useState<'FAKE' | 'REAL'>('REAL');
+  const [loadingFrame, setLoadingFrame] = useState(0);
 
-  
+  useEffect(() => {
+    pickVideo();
+  }, []);
+
+  useEffect(() => {
+    if (overlayVisible && overlayMode === 'loading') {
+      const timer = setInterval(() => {
+        setLoadingFrame((prev) => (prev + 1) % LOADING_SVGS.length);
+      }, 250);
+      return () => clearInterval(timer);
+    }
+  }, [overlayVisible, overlayMode]);
+
   const ensureMediaPermission = async () => {
     const perm = await ImagePicker.getMediaLibraryPermissionsAsync();
     if (perm.granted) return true;
@@ -25,7 +43,6 @@ export default function UploadScreen() {
     return ask.granted;
   };
 
-  
   const pickVideo = async () => {
     const ok = await ensureMediaPermission();
     if (!ok) {
@@ -41,10 +58,10 @@ export default function UploadScreen() {
 
     if (!result.canceled && result.assets?.[0]?.uri) {
       setVideoUri(result.assets[0].uri);
+      setConfirmVisible(true);
     }
   };
 
-  
   const handleAnalyze = async () => {
     if (!videoUri) {
       Alert.alert('영상이 선택되지 않았습니다.');
@@ -53,341 +70,239 @@ export default function UploadScreen() {
 
     try {
       setBusy(true);
-      setAnalyzing(true);
-      setAnalysisResult(null);
-      
-      // 알림창을 "분석 중" 상태로 업데이트
-      try {
-        await FloatingWidget.updateAnalyzing();
-        console.log("[UploadScreen] 알림창을 분석 중 상태로 업데이트");
-      } catch (e) {
-        console.error("[UploadScreen] 알림 상태 업데이트 실패:", e);
-      }
-      
-      // Firebase 업로드를 생략하고, 디바이스 로컬 URI를 그대로 백엔드로 전송
+      setConfirmVisible(false);
+      setOverlayMode('loading');
+      setOverlayVisible(true);
+      setLoadingFrame(0);
+
       const res: any = await analyzeVideo(videoUri, 'user123');
       const timeline = Array.isArray(res?.timeline) ? res.timeline : undefined;
-      console.log("분석 결과:", res);
-      console.log("타임라인:", timeline);
-      
-      // 딥페이크 확률 계산
-      // 백엔드에서 이미 계산된 overall_confidence를 우선 사용 (FAKE confidence로 계산됨)
+
       let deepfakePercentage = 0;
-      
-      // 1순위: video_analysis.overall_confidence (백엔드에서 FAKE confidence로 계산)
       if (res?.video_analysis?.overall_confidence !== undefined) {
         deepfakePercentage = Math.round(res.video_analysis.overall_confidence * 100);
-      }
-      // 2순위: summary.overall_confidence (FAKE일 때)
-      else if (res?.summary?.overall_result === 'FAKE' && res?.summary?.overall_confidence !== undefined) {
+      } else if (res?.summary?.overall_result === 'FAKE' && res?.summary?.overall_confidence !== undefined) {
         deepfakePercentage = Math.round(res.summary.overall_confidence * 100);
-      }
-      // 3순위: timeline 기반 계산 (FAKE 세그먼트의 fake_confidence 사용)
-      else if (timeline && timeline.length > 0) {
+      } else if (timeline && timeline.length > 0) {
         const fakeSegments = timeline.filter((item: any) => item.result === 'FAKE' || item.result === 'fake');
-        
         if (fakeSegments.length > 0) {
-          // FAKE 세그먼트의 details.video.fake_confidence 우선 사용
           let totalFakeConf = 0;
           let count = 0;
-          
           fakeSegments.forEach((segment: any) => {
             if (segment.details?.video?.fake_confidence !== undefined) {
               totalFakeConf += segment.details.video.fake_confidence;
               count++;
             } else if (segment.confidence !== undefined) {
-              // fallback: segment confidence 사용 (FAKE 세그먼트의 confidence는 FAKE confidence로 가정)
               totalFakeConf += segment.confidence;
               count++;
             }
           });
-          
           if (count > 0) {
-            const avgFakeConfidence = totalFakeConf / count;
-            deepfakePercentage = Math.round(avgFakeConfidence * 100);
-          } else {
-            // FAKE 세그먼트가 있지만 confidence 정보가 없는 경우, FAKE 비율로 계산
-            const fakeRatio = fakeSegments.length / timeline.length;
-            deepfakePercentage = Math.round(fakeRatio * 100);
+            deepfakePercentage = Math.round((totalFakeConf / count) * 100);
           }
-        } else {
-          // FAKE 세그먼트가 없는 경우 (REAL로 판정)
-          deepfakePercentage = 0;
         }
       }
-      
-      console.log("[UploadScreen] 계산된 딥페이크 확률:", deepfakePercentage + "%");
-      
-      // 오디오 확률 계산
-      let audioPercentage = 0;
-      if (res?.audio_analysis?.fake_confidence !== undefined) {
-        audioPercentage = Math.round(res.audio_analysis.fake_confidence * 100);
-      } else if (res?.summary?.audio_confidence !== undefined) {
-        audioPercentage = Math.round(res.summary.audio_confidence * 100);
-      }
-      
-      // 분석 결과 (FAKE 또는 REAL)
-      const result = res?.summary?.overall_result || res?.video_analysis?.overall_result || (deepfakePercentage > 50 ? "FAKE" : "REAL");
-      
-      // 알림창 업데이트 (분석 완료 상태)
-      try {
-        await FloatingWidget.updateAnalysisResult(
-          result,
-          deepfakePercentage,
-          audioPercentage,
-          res?.videoId || null
-        );
-        console.log("[UploadScreen] 알림창 업데이트 완료");
-      } catch (e) {
-        console.error("[UploadScreen] 알림창 업데이트 실패:", e);
-      }
-      
-      // 분석 완료 - 결과를 Modal로 표시
-      setAnalysisResult({ percentage: deepfakePercentage, timeline, videoId: res?.videoId });
-      setAnalyzing(false);
+
+      const resultLabel: 'FAKE' | 'REAL' =
+        (res?.summary?.overall_result || res?.video_analysis?.overall_result || (deepfakePercentage > 50 ? 'FAKE' : 'REAL')) === 'FAKE'
+          ? 'FAKE'
+          : 'REAL';
+
+      setOverlayPercentage(deepfakePercentage);
+      setOverlayResult(resultLabel);
+      setOverlayMode('result');
       setBusy(false);
     } catch (error: any) {
       console.error(error);
-      setAnalyzing(false);
-      setAnalysisResult(null);
-      
-      // 백엔드에서 얼굴이 감지되지 않았다는 에러 메시지 처리
-      const errorMessage = error?.response?.data?.error || error?.message || error?.toString() || "알 수 없는 오류";
-      if (errorMessage.includes("얼굴이 감지되지") || errorMessage.includes("face")) {
-        Alert.alert(
-          "얼굴 감지 실패",
-          "영상에서 얼굴이 감지되지 않았습니다.\n사람 얼굴이 포함된 영상을 업로드해주세요."
-        );
-      } else {
-        Alert.alert('업로드 또는 분석 실패', errorMessage);
-      }
+      setOverlayVisible(false);
       setBusy(false);
+      const errorMessage = error?.response?.data?.error || error?.message || error?.toString() || '알 수 없는 오류';
+      if (errorMessage.includes('얼굴이 감지되지') || errorMessage.includes('face')) {
+        Alert.alert('얼굴 감지 실패', '영상에서 얼굴이 감지되지 않았습니다.\n사람 얼굴이 포함된 영상을 업로드해주세요.');
+      } else {
+        Alert.alert('분석 실패', errorMessage);
+      }
     }
+  };
+
+  const closeOverlay = () => {
+    setOverlayVisible(false);
+    setOverlayMode('loading');
+    setOverlayPercentage(0);
   };
 
   return (
     <View style={styles.container}>
-      {/* 분석 중/완료 Modal */}
-      <Modal
-        visible={analyzing || analysisResult !== null}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => {
-          if (analysisResult !== null) {
-            setAnalysisResult(null);
-            setBusy(false);
-          }
-        }}
+      <Text style={styles.title}>영상으로 탐지</Text>
+      <Text style={styles.subtitle}>분석할 영상을 선택한 뒤 분석을 진행하세요.</Text>
+
+      <View style={styles.selectedBox}>
+        <Text style={styles.selectedLabel}>선택된 영상</Text>
+        <Text style={styles.selectedPath}>{videoUri ?? '아직 선택되지 않았습니다.'}</Text>
+      </View>
+
+      <TouchableOpacity style={styles.primaryButton} onPress={pickVideo} activeOpacity={0.8} disabled={busy}>
+        <Text style={styles.primaryButtonText}>영상 다시 선택</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.secondaryButton, (!videoUri || busy) && styles.secondaryButtonDisabled]}
+        onPress={() => setConfirmVisible(true)}
+        activeOpacity={0.8}
+        disabled={!videoUri || busy}
       >
+        <Text style={styles.secondaryButtonText}>{busy ? '처리 중…' : '분석 시작'}</Text>
+      </TouchableOpacity>
+
+      {/* 분석 확인 모달 */}
+      <Modal visible={confirmVisible} transparent animationType="fade" onRequestClose={() => setConfirmVisible(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            {analyzing ? (
-              <>
-                <ActivityIndicator size="large" color="#2563eb" />
-                <Text style={styles.modalTitle}>분석 중</Text>
-                <Text style={styles.modalSubtitle}>영상을 분석하고 있습니다.</Text>
-                <Text style={styles.modalSubtitle}>잠시만 기다려주세요...</Text>
-              </>
-            ) : analysisResult !== null ? (
-              <>
-                <Text style={styles.modalTitle}>분석 완료</Text>
-                <Text style={styles.modalResultPercentage}>{analysisResult.percentage}%</Text>
-                <Text style={styles.modalResultLabel}>AI 영상 확률</Text>
-                <View style={styles.modalButtonContainer}>
-                  <TouchableOpacity
-                    style={styles.modalButtonClose}
-                    onPress={() => {
-                      setAnalysisResult(null);
-                      setBusy(false);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.modalButtonCloseBackground}>
-                      <Text style={styles.modalButtonCloseText}>닫기</Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.modalButtonDownload}
-                    onPress={async () => {
-                      try {
-                        if (!analysisResult?.videoId) {
-                          Alert.alert("오류", "비디오 ID를 찾을 수 없습니다.");
-                          return;
-                        }
-                        
-                        setBusy(true);
-                        
-                        // JSONL, CSV, Metadata 파일 모두 다운로드
-                        const fileTypes: Array<{type: 'jsonl' | 'csv' | 'metadata', name: string}> = [
-                          { type: 'jsonl', name: '데이터셋 JSONL' },
-                          { type: 'csv', name: '타임라인 CSV' },
-                          { type: 'metadata', name: '메타데이터 JSON' }
-                        ];
-                        
-                        for (const file of fileTypes) {
-                          try {
-                            const downloadUrl = await downloadDataset(analysisResult.videoId, file.type);
-                            const supported = await Linking.canOpenURL(downloadUrl);
-                            if (supported) {
-                              await Linking.openURL(downloadUrl);
-                              // 각 파일 사이에 약간의 딜레이
-                              await new Promise(resolve => setTimeout(resolve, 500));
-                            }
-                          } catch (error: any) {
-                            console.error(`${file.name} 다운로드 오류:`, error);
-                          }
-                        }
-                        
-                        Alert.alert("다운로드 시작", "데이터셋 파일 다운로드가 시작되었습니다.\n(JSONL, CSV, JSON)");
-                        
-                        setAnalysisResult(null);
-                        setBusy(false);
-                      } catch (error: any) {
-                        console.error("데이터셋 다운로드 오류:", error);
-                        Alert.alert("오류", `데이터셋 다운로드 실패: ${error?.message || "알 수 없는 오류"}`);
-                        setBusy(false);
-                      }
-                    }}
-                    activeOpacity={0.8}
-                    disabled={busy}
-                  >
-                    <View style={styles.modalButtonDownloadBackground}>
-                      <Text style={styles.modalButtonDownloadText}>데이터셋 다운로드</Text>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : null}
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>영상 분석 안내</Text>
+            <Text style={styles.confirmSubtitle}>선택한 영상을 분석하시겠습니까?</Text>
+            <View style={styles.confirmButtons}>
+              <TouchableOpacity
+                style={[styles.confirmButton, styles.confirmButtonSpacing]}
+                onPress={() => setConfirmVisible(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.confirmButtonText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.confirmButton} onPress={handleAnalyze} activeOpacity={0.8} disabled={busy}>
+                <Text style={styles.confirmButtonText}>분석하기</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
 
-      <Button title="영상 선택" onPress={pickVideo} />
-      {videoUri && <Text style={styles.text}>선택된 영상: {videoUri}</Text>}
-
-      <View style={{ height: 16 }} />
-
-      <Button
-        title={busy ? '처리 중…' : '분석 요청'}
-        onPress={handleAnalyze}
-        disabled={!videoUri || busy}
-        color="#111827"
-      />
-
-      {busy && !analyzing && analysisResult === null && (
-        <View style={styles.overlay}>
-          <ActivityIndicator size="large" />
-          <Text style={styles.dim}>업로드 및 분석 중…</Text>
+      {/* 위젯 스타일 오버레이 */}
+      <Modal visible={overlayVisible} transparent animationType="fade" onRequestClose={closeOverlay}>
+        <View style={styles.widgetOverlay}>
+          <View style={styles.widgetCard}>
+            {overlayMode === 'loading' ? (
+              <>
+                <View style={styles.loadingRow}>
+                  {LOADING_SVGS.map((svg, index) => (
+                    <View
+                      key={`loading-${index}`}
+                      style={[
+                        styles.loadingFrame,
+                        { width: LOADING_SIZES[index], height: LOADING_SIZES[index] },
+                        loadingFrame === index ? styles.loadingFrameVisible : styles.loadingFrameHidden,
+                      ]}
+                    >
+                      <SvgXml xml={svg} width="100%" height="100%" />
+                    </View>
+                  ))}
+                </View>
+                <Text style={styles.widgetTitle}>위젯 분석 중</Text>
+                <Text style={styles.widgetSubtitle}>영상 업로드 및 분석을 수행하고 있습니다...</Text>
+                <TouchableOpacity style={styles.widgetButton} onPress={closeOverlay} activeOpacity={0.8} disabled={busy}>
+                  <Text style={styles.widgetButtonText}>닫기</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.widgetTitle}>분석 완료</Text>
+                <Text style={styles.widgetPercentage}>{overlayPercentage}%</Text>
+                <Text style={styles.widgetResult}>
+                  {overlayResult === 'FAKE' ? '위험 확률이 높습니다.' : '위험 확률이 낮습니다.'}
+                </Text>
+                <TouchableOpacity style={styles.widgetButton} onPress={closeOverlay} activeOpacity={0.8}>
+                  <Text style={styles.widgetButtonText}>닫기</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
         </View>
-      )}
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: '#000' },
-  text: { marginVertical: 10, color: '#9ca3af' },
-  overlay: { marginTop: 20, alignItems: 'center' },
-  dim: { marginTop: 6, color: '#9ca3af' },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
-    justifyContent: "center",
-    alignItems: "center",
+  container: { flex: 1, backgroundColor: '#000', padding: 24, justifyContent: 'center' },
+  title: { fontSize: 28, fontWeight: '700', color: '#fff', marginBottom: 8, textAlign: 'center' },
+  subtitle: { fontSize: 16, color: '#9ca3af', textAlign: 'center', marginBottom: 32 },
+  selectedBox: {
+    borderRadius: 16,
+    backgroundColor: '#111827',
+    padding: 20,
+    marginBottom: 24,
   },
-  modalContent: {
-    backgroundColor: "#1f2937",
-    borderRadius: 20,
-    padding: 32,
-    alignItems: "center",
-    minWidth: 300,
-    maxWidth: "80%",
-  },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#fff",
-    marginTop: 20,
+  selectedLabel: { color: '#9ca3af', marginBottom: 6 },
+  selectedPath: { color: '#fff' },
+  primaryButton: {
+    backgroundColor: '#ffc628',
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: 'center',
     marginBottom: 12,
   },
-  modalSubtitle: {
-    fontSize: 16,
-    color: "#9ca3af",
-    textAlign: "center",
-    marginBottom: 8,
+  primaryButtonText: { color: '#000', fontSize: 16, fontWeight: '700' },
+  secondaryButton: {
+    borderColor: '#ffc628',
+    borderWidth: 2,
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: 'center',
   },
-  modalResultPercentage: {
-    fontSize: 64,
-    fontWeight: "bold",
-    color: "#2563eb",
-    marginTop: 20,
-    marginBottom: 8,
+  secondaryButtonDisabled: {
+    opacity: 0.4,
   },
-  modalResultLabel: {
-    fontSize: 18,
-    color: "#9ca3af",
-    marginBottom: 32,
-  },
-  modalButtonContainer: {
-    flexDirection: "row",
-    gap: 12,
-    width: "100%",
-    alignItems: "center",
-  },
-  modalButton: {
+  secondaryButtonText: { color: '#ffc628', fontSize: 16, fontWeight: '700' },
+  modalOverlay: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  confirmCard: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 24,
+    width: '100%',
+  },
+  confirmTitle: { fontSize: 20, fontWeight: '700', marginBottom: 12, color: '#111827' },
+  confirmSubtitle: { fontSize: 16, color: '#4b5563', marginBottom: 24 },
+  confirmButtons: { flexDirection: 'row', justifyContent: 'flex-end' },
+  confirmButtonSpacing: { marginRight: 12 },
+  confirmButton: {
+    backgroundColor: '#ffc628',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 14,
+  },
+  confirmButtonText: { color: '#000', fontWeight: '700' },
+  widgetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  widgetCard: {
+    backgroundColor: '#fff',
+    borderRadius: 32,
+    padding: 32,
+    width: 320,
+    alignItems: 'center',
+  },
+  loadingRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 24 },
+  loadingFrame: { marginHorizontal: 4, opacity: 0 },
+  loadingFrameVisible: { opacity: 1 },
+  loadingFrameHidden: { opacity: 0 },
+  widgetTitle: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 8, textAlign: 'center' },
+  widgetSubtitle: { fontSize: 15, color: '#4b5563', textAlign: 'center', marginBottom: 24 },
+  widgetPercentage: { fontSize: 48, fontWeight: '800', color: '#111827', marginBottom: 12 },
+  widgetResult: { fontSize: 16, color: '#4b5563', marginBottom: 24, textAlign: 'center' },
+  widgetButton: {
+    backgroundColor: '#ffc628',
     paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    alignItems: "center",
+    paddingHorizontal: 40,
+    borderRadius: 20,
   },
-  modalButtonCancel: {
-    backgroundColor: "#374151",
-  },
-  modalButtonConfirm: {
-    backgroundColor: "#2563eb",
-  },
-  modalButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  modalButtonClose: {
-    flex: 1,
-    height: 70,
-  },
-  modalButtonCloseBackground: {
-    width: "100%",
-    height: 70,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 18,
-    backgroundColor: "#374151", // 회색 배경
-    borderRadius: 10,
-  },
-  modalButtonCloseText: {
-    color: "#000000",
-    fontSize: 24,
-    fontWeight: "800",
-    letterSpacing: 2,
-  },
-  modalButtonDownload: {
-    flex: 1,
-    height: 70,
-  },
-  modalButtonDownloadBackground: {
-    width: "100%",
-    height: 70,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 18,
-    backgroundColor: "#2563eb", // 파란색 배경
-    borderRadius: 10,
-  },
-  modalButtonDownloadText: {
-    color: "#000000",
-    fontSize: 24,
-    fontWeight: "800",
-    letterSpacing: 2,
-  },
+  widgetButtonText: { color: '#000', fontWeight: '700', fontSize: 16 },
 });

@@ -14,8 +14,10 @@ WEIGHTS_DIR.mkdir(exist_ok=True)
 # EfficientNet-B0 (DFDC) 모델 경로
 EFFICIENTNET_WEIGHTS = str(WEIGHTS_DIR / "effb0_dfdc.pth")
 
-# MesoNet 모델 경로 (TensorFlow/Keras .h5 파일)
-MESONET_WEIGHTS = str(WEIGHTS_DIR / "Meso4_DF.h5")
+# MesoNet 모델 경로 (튜닝된 PyTorch .pt 파일)
+MESONET_WEIGHTS = str(WEIGHTS_DIR / "best_model_tuned.pt")
+# 기존 모델 (백업용)
+MESONET_WEIGHTS_OLD = str(WEIGHTS_DIR / "Meso4_DF.h5")
 
 # 프레임 샘플링 설정
 FRAME_SAMPLES = 10  # 추출할 프레임 수
@@ -24,7 +26,7 @@ FRAME_SAMPLES = 10  # 추출할 프레임 수
 USE_FACE_CROP = True  # 고해상도(720~1080p) 영상일 경우 필수
 
 # 이미지 리사이즈 크기
-IMAGE_SIZE = 224  # EfficientNet-B0와 MesoNet 입력 크기
+IMAGE_SIZE = 256  # 튜닝된 MesoNet 입력 크기 (256x256)
 
 # 앙상블 가중치
 ENSEMBLE_WEIGHT_EFFICIENTNET = 0.7
