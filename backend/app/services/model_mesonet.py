@@ -102,15 +102,19 @@ class MesoNetBackend:
                 return True
                 
             try:
-                # 모델 파일 확인
-                if not Path(MESONET_WEIGHTS).exists():
-                    raise FileNotFoundError(
-                        f"모델 파일을 찾을 수 없습니다: {MESONET_WEIGHTS}\n"
-                        f"다운로드 스크립트 실행: python download_models.py"
-                    )
-                
                 # 모델 구조 생성 (튜닝된 모델: 256x256 입력, dropout=0.4)
                 self.model = Meso4(num_classes=2, dropout_rate=0.4)
+                
+                # 모델 파일 확인 및 로드
+                if not Path(MESONET_WEIGHTS).exists():
+                    print(f"⚠ 경고: MesoNet 모델 파일을 찾을 수 없습니다: {MESONET_WEIGHTS}")
+                    print(f"⚠ 랜덤 초기화된 모델을 사용합니다. 성능이 저하될 수 있습니다.")
+                    print(f"💡 모델 파일을 설정하려면:")
+                    print(f"   1. 기존 컴퓨터에서 backend/weights/best_model_tuned.pt 파일을 복사")
+                    print(f"   2. 또는 python backend/download_models.py 실행")
+                    self.model.to(self.device).eval()
+                    self.model_loaded = True
+                    return True
                 
                 # 가중치 로드
                 checkpoint = torch.load(MESONET_WEIGHTS, map_location=self.device)

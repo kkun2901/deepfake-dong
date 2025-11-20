@@ -74,7 +74,42 @@ venv\Scripts\activate
 pip install -r ..\requirements.txt
 ```
 
-### 5. Firebase 설정 (필요한 경우)
+### 5. 모델 파일 설정 (중요!)
+
+**⚠️ 모델 가중치 파일은 Git에 포함되지 않습니다.** 다른 컴퓨터에서 사용하려면 모델 파일을 별도로 설정해야 합니다.
+
+#### 옵션 1: 기존 컴퓨터에서 모델 파일 복사 (권장)
+
+기존 컴퓨터에서 다음 파일들을 새 컴퓨터로 복사하세요:
+
+```
+backend/weights/
+├── best_model_tuned.pt      # MesoNet 모델 (필수)
+└── effb0_dfdc.pth           # EfficientNet 모델 (선택, 없어도 동작)
+```
+
+**복사 방법:**
+1. 기존 컴퓨터에서 `backend/weights/` 폴더 전체를 USB나 클라우드로 복사
+2. 새 컴퓨터의 `backend/weights/` 폴더에 붙여넣기
+
+#### 옵션 2: 모델 파일 없이 실행 (기본 동작)
+
+모델 파일이 없어도 앱은 동작합니다:
+- **MesoNet**: 랜덤 초기화된 모델 사용 (성능 저하 가능)
+- **EfficientNet**: ImageNet pretrained 모델 자동 다운로드
+
+**주의:** 모델 파일이 없으면 딥페이크 탐지 성능이 저하될 수 있습니다.
+
+#### 옵션 3: 모델 다운로드 스크립트 실행
+
+```bash
+cd backend
+python download_models.py
+```
+
+이 스크립트는 모델 파일을 자동으로 다운로드하려고 시도합니다.
+
+### 6. Firebase 설정 (필요한 경우)
 
 Firebase 키 파일이 필요한 경우:
 1. `backend/app/core/firebase-key.json` 파일을 프로젝트에 추가
@@ -193,6 +228,7 @@ deepfake-detector-app-main/
 - Android Studio의 SDK Manager에서 필요한 SDK 설치 여부
 - 환경 변수 설정 (JAVA_HOME, ANDROID_HOME 등)
 - 방화벽 설정 (백엔드 서버 포트 8000)
+
 
 
 

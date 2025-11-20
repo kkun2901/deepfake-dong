@@ -5,6 +5,8 @@ python-multipart==0.0.6
 
 # AI/ML models and processing
 torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
 transformers>=4.35.0
 sentence-transformers>=2.2.2
 whisper>=1.1.10
@@ -14,6 +16,9 @@ soundfile>=0.12.1
 scikit-learn>=1.3.0
 # MesoNet 모델 지원 (TensorFlow/Keras)
 tensorflow-cpu>=2.15.0,<3.0.0
+# EfficientNet 모델 지원 (선택적)
+efficientnet-pytorch>=0.7.1
+timm>=0.9.0
 # MediaPipe (얼굴 감지, 선택적)
 mediapipe>=0.10.0
 
